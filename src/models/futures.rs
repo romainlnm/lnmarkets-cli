@@ -12,8 +12,8 @@ pub enum Side {
 impl Side {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Side::Buy => "b",
-            Side::Sell => "s",
+            Side::Buy => "buy",
+            Side::Sell => "sell",
         }
     }
 }
@@ -30,8 +30,8 @@ pub enum OrderType {
 impl OrderType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            OrderType::Market => "m",
-            OrderType::Limit => "l",
+            OrderType::Market => "market",
+            OrderType::Limit => "limit",
         }
     }
 }

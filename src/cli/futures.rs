@@ -216,30 +216,40 @@ impl FuturesCommands {
                     anyhow::bail!("Price is required for limit orders");
                 }
 
-                #[derive(Serialize)]
-                struct NewTradeRequest {
-                    side: String,
-                    #[serde(rename = "type")]
-                    order_type: String,
-                    quantity: i64,
-                    leverage: f64,
-                    #[serde(skip_serializing_if = "Option::is_none")]
-                    price: Option<f64>,
-                    #[serde(skip_serializing_if = "Option::is_none")]
-                    stoploss: Option<f64>,
-                    #[serde(skip_serializing_if = "Option::is_none")]
-                    takeprofit: Option<f64>,
-                }
+                // Build request as serde_json::Value to control number formatting
+                // (JavaScript drops .0 from whole numbers, so we must match)
+                let mut request = serde_json::json!({
+                    "side": side.as_str(),
+                    "type": order_type.as_str(),
+                    "quantity": *quantity,
+                    "leverage": if leverage.fract() == 0.0 {
+                        serde_json::Value::Number((*leverage as i64).into())
+                    } else {
+                        serde_json::json!(*leverage)
+                    }
+                });
 
-                let request = NewTradeRequest {
-                    side: side.as_str().to_string(),
-                    order_type: order_type.as_str().to_string(),
-                    quantity: *quantity,
-                    leverage: *leverage,
-                    price: *price,
-                    stoploss: *stoploss,
-                    takeprofit: *takeprofit,
-                };
+                if let Some(p) = price {
+                    request["price"] = if p.fract() == 0.0 {
+                        serde_json::Value::Number((*p as i64).into())
+                    } else {
+                        serde_json::json!(*p)
+                    };
+                }
+                if let Some(sl) = stoploss {
+                    request["stoploss"] = if sl.fract() == 0.0 {
+                        serde_json::Value::Number((*sl as i64).into())
+                    } else {
+                        serde_json::json!(*sl)
+                    };
+                }
+                if let Some(tp) = takeprofit {
+                    request["takeprofit"] = if tp.fract() == 0.0 {
+                        serde_json::Value::Number((*tp as i64).into())
+                    } else {
+                        serde_json::json!(*tp)
+                    };
+                }
 
                 let trade: Trade = client.request(Method::POST, "futures/isolated/trade", Some(&request)).await?;
 
@@ -348,13 +358,8 @@ impl FuturesCommands {
             }
 
             Self::Close { id } => {
-                #[derive(Serialize)]
-                struct CloseRequest {
-                    id: String,
-                }
-
-                let request = CloseRequest { id: id.clone() };
-                let result: serde_json::Value = client.request(Method::DELETE, "futures/isolated/trade/close", Some(&request)).await?;
+                let request = serde_json::json!({ "id": id });
+                let result: serde_json::Value = client.request(Method::POST, "futures/isolated/trade/close", Some(&request)).await?;
 
                 match format {
                     OutputFormat::Json => println!("{}", serde_json::to_string(&result)?),
@@ -384,7 +389,7 @@ impl FuturesCommands {
             }
 
             Self::CancelAll => {
-                let result: serde_json::Value = client.request(Method::DELETE, "futures/isolated/trades/cancel-all", None::<&()>).await?;
+                let result: serde_json::Value = client.request(Method::POST, "futures/isolated/trades/cancel-all", None::<&()>).await?;
 
                 match format {
                     OutputFormat::Json => println!("{}", serde_json::to_string(&result)?),
