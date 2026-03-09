@@ -101,12 +101,12 @@ impl AccountCommands {
     pub async fn execute(&self, client: &LnmClient, format: OutputFormat) -> Result<()> {
         match self {
             Self::Info => {
-                let user: User = client.request(Method::GET, "user", None::<&()>).await?;
+                let user: User = client.request(Method::GET, "account", None::<&()>).await?;
                 print_single(UserRow::from(user), format)?;
             }
 
             Self::Balance => {
-                let user: User = client.request(Method::GET, "user", None::<&()>).await?;
+                let user: User = client.request(Method::GET, "account", None::<&()>).await?;
                 let balance = user.balance.unwrap_or(0);
 
                 match format {
@@ -147,11 +147,11 @@ impl AccountCommands {
                     show_username: *show_username,
                 };
 
-                let _: serde_json::Value = client.request(Method::PUT, "user", Some(&request)).await?;
+                let _: serde_json::Value = client.request(Method::PUT, "account", Some(&request)).await?;
 
                 match format {
                     OutputFormat::Json | OutputFormat::JsonPretty => {
-                        let user: User = client.request(Method::GET, "user", None::<&()>).await?;
+                        let user: User = client.request(Method::GET, "account", None::<&()>).await?;
                         print_single(UserRow::from(user), format)?;
                     }
                     OutputFormat::Table => {
