@@ -1,0 +1,69 @@
+mod api;
+mod cli;
+mod config;
+mod models;
+
+use anyhow::Result;
+use clap::Parser;
+
+use api::LnmClient;
+use cli::{Cli, Commands};
+use config::Config;
+
+#[tokio::main]
+async fn main() {
+    if let Err(e) = run().await {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
+    let cli = Cli::parse();
+    let config = Config::load().unwrap_or_default();
+    let format = cli.output;
+    let network = cli.network();
+
+    match cli.command {
+        Commands::Market(cmd) => {
+            let client = LnmClient::new(network, None)?;
+            cmd.execute(&client, format).await?;
+        }
+
+        Commands::Futures(cmd) => {
+            let credentials = config.get_credentials();
+            let client = LnmClient::new(network, Some(credentials))?;
+            cmd.execute(&client, format).await?;
+        }
+
+        Commands::Account(cmd) => {
+            let credentials = config.get_credentials();
+            let client = LnmClient::new(network, Some(credentials))?;
+            cmd.execute(&client, format).await?;
+        }
+
+        Commands::Funding(cmd) => {
+            let credentials = config.get_credentials();
+            let client = LnmClient::new(network, Some(credentials))?;
+            cmd.execute(&client, format).await?;
+        }
+
+        Commands::Auth(cmd) => {
+            cmd.execute(format).await?;
+        }
+
+        Commands::Config => {
+            println!("Configuration:");
+            println!("  Config file: {:?}", Config::config_path()?);
+            println!("  Network: {:?}", config.settings.network);
+            println!("  Output format: {:?}", config.settings.output_format);
+            println!("  Credentials configured: {}", config.has_credentials());
+            println!("\nEnvironment variables:");
+            println!("  LNM_API_KEY: {}", if std::env::var("LNM_API_KEY").is_ok() { "set" } else { "not set" });
+            println!("  LNM_API_SECRET: {}", if std::env::var("LNM_API_SECRET").is_ok() { "set" } else { "not set" });
+            println!("  LNM_API_PASSPHRASE: {}", if std::env::var("LNM_API_PASSPHRASE").is_ok() { "set" } else { "not set" });
+        }
+    }
+
+    Ok(())
+}
