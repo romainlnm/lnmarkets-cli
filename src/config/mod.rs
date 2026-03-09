@@ -79,7 +79,7 @@ impl Config {
     pub fn config_dir() -> Result<PathBuf> {
         let dir = dirs::config_dir()
             .context("Could not determine config directory")?
-            .join("lnm");
+            .join("lnmarkets");
         Ok(dir)
     }
 

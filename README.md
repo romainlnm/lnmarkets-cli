@@ -1,4 +1,4 @@
-# lnm-cli
+# lnmarkets-cli
 
 Command-line interface for [LN Markets](https://lnmarkets.com) API v3.
 
@@ -7,14 +7,14 @@ Inspired by [kraken-cli](https://github.com/krakenfx/kraken-cli).
 ## Installation
 
 ```bash
-cargo install --path .
+cargo install --path . --locked
 ```
 
 Or build from source:
 
 ```bash
 cargo build --release
-./target/release/lnm --help
+./target/release/lnmarkets --help
 ```
 
 ## Quick Start
@@ -23,7 +23,7 @@ cargo build --release
 
 2. Configure credentials:
 ```bash
-lnm auth login
+lnmarkets auth login
 ```
 
 Or use environment variables:
@@ -35,9 +35,9 @@ export LNM_API_PASSPHRASE="your-passphrase"
 
 3. Start trading:
 ```bash
-lnm market ticker
-lnm account balance
-lnm futures list
+lnmarkets market ticker
+lnmarkets account balance
+lnmarkets futures list
 ```
 
 ## Commands
@@ -45,70 +45,70 @@ lnm futures list
 ### Market Data (Public)
 
 ```bash
-lnm market ticker                    # Current ticker (bid/ask/index)
-lnm market prices                    # OHLC price history
-lnm market prices -r h1 -l 24        # Last 24 hourly candles
-lnm market index                     # Index history
-lnm market info                      # Market limits and specs
-lnm market fees                      # Funding fee history
+lnmarkets market ticker                    # Current ticker (bid/ask/index)
+lnmarkets market prices                    # OHLC price history
+lnmarkets market prices -r h1 -l 24        # Last 24 hourly candles
+lnmarkets market index                     # Index history
+lnmarkets market info                      # Market limits and specs
+lnmarkets market fees                      # Funding fee history
 ```
 
 ### Futures Trading (Authenticated)
 
 ```bash
-lnm futures list                     # List all positions
-lnm futures list --status running    # List running positions
-lnm futures get <trade-id>           # Get trade details
+lnmarkets futures list                     # List all positions
+lnmarkets futures list --status running    # List running positions
+lnmarkets futures get <trade-id>           # Get trade details
 
 # Open positions
-lnm futures open --side buy --quantity 10000 --leverage 10
-lnm futures open --side sell -q 50000 -l 5 --stoploss 95000 --takeprofit 85000
-lnm futures open --side buy -t limit --price 90000 -q 10000 -l 2
+lnmarkets futures open --side buy --quantity 10000 --leverage 10
+lnmarkets futures open --side sell -q 50000 -l 5 --stoploss 95000 --takeprofit 85000
+lnmarkets futures open --side buy -t limit --price 90000 -q 10000 -l 2
 
 # Manage positions
-lnm futures update <id> --stoploss 92000 --takeprofit 110000
-lnm futures add-margin <id> --amount 5000
-lnm futures cashin <id> --amount 1000
-lnm futures close <id>
-lnm futures close-all
+lnmarkets futures update <id> --stoploss 92000 --takeprofit 110000
+lnmarkets futures add-margin <id> --amount 5000
+lnmarkets futures cashin <id> --amount 1000
+lnmarkets futures close <id>
+lnmarkets futures close-all
 
 # Cancel pending orders
-lnm futures cancel <id>
-lnm futures cancel-all
+lnmarkets futures cancel <id>
+lnmarkets futures cancel-all
 ```
 
 ### Account (Authenticated)
 
 ```bash
-lnm account info                     # Account details
-lnm account balance                  # Current balance
-lnm account update --username "satoshi"
-lnm account leaderboard              # View leaderboard
-lnm account leaderboard -p daily     # Daily leaderboard
+lnmarkets account info                     # Account details
+lnmarkets account balance                  # Current balance
+lnmarkets account update --username "satoshi"
+lnmarkets account leaderboard              # View leaderboard
+lnmarkets account leaderboard -p daily     # Daily leaderboard
 ```
 
 ### Funding (Authenticated)
 
 ```bash
 # Deposits
-lnm funding deposit --amount 10000   # Create Lightning invoice
-lnm funding new-address              # Generate Bitcoin address
-lnm funding addresses                # List Bitcoin addresses
-lnm funding deposits                 # Deposit history
+lnmarkets funding deposit --amount 10000   # Create Lightning invoice
+lnmarkets funding new-address              # Generate Bitcoin address
+lnmarkets funding addresses                # List Bitcoin addresses
+lnmarkets funding deposits                 # Deposit history
 
 # Withdrawals
-lnm funding withdraw --amount 5000 --invoice <bolt11>
-lnm funding withdraw-onchain --amount 100000 --address <btc-address>
-lnm funding withdrawals              # Withdrawal history
+lnmarkets funding withdraw --amount 5000 --invoice <bolt11>
+lnmarkets funding withdraw-onchain --amount 100000 --address <btc-address>
+lnmarkets funding withdrawals              # Withdrawal history
 ```
 
 ### Authentication
 
 ```bash
-lnm auth login                       # Configure credentials
-lnm auth logout                      # Remove credentials
-lnm auth status                      # Check auth status
-lnm auth whoami                      # Show config location
+lnmarkets auth login                       # Configure credentials
+lnmarkets auth logout                      # Remove credentials
+lnmarkets auth status                      # Check auth status
+lnmarkets auth whoami                      # Show config location
 ```
 
 ## Global Options
@@ -123,14 +123,14 @@ lnm auth whoami                      # Show config location
 ## Output Formats
 
 ```bash
-lnm market ticker                    # Table format (default)
-lnm market ticker -o json            # JSON (single line)
-lnm market ticker -o json-pretty     # JSON (formatted)
+lnmarkets market ticker                    # Table format (default)
+lnmarkets market ticker -o json            # JSON (single line)
+lnmarkets market ticker -o json-pretty     # JSON (formatted)
 ```
 
 ## Configuration
 
-Config file location: `~/.config/lnm/config.toml`
+Config file location: `~/.config/lnmarkets/config.toml`
 
 ```toml
 [credentials]

@@ -49,7 +49,7 @@ urlencoding = "2"
 tokio-test = "0.4"
 
 [[bin]]
-name = "lnm"
+name = "lnmarkets"
 path = "src/main.rs"
 
 [profile.release]
