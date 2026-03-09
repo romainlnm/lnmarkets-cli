@@ -6,42 +6,45 @@ use tabled::Tabled;
 
 use crate::api::LnmClient;
 use crate::config::OutputFormat;
-use crate::models::{Ticker, PriceHistory, Resolution, CarryingFees};
+use crate::models::Ticker;
 use super::output::{print_single, print_list, format_price};
+use serde::Deserialize;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct IndexEntry {
+    pub time: String,
+    pub index: f64,
+}
 
 #[derive(Subcommand)]
 pub enum MarketCommands {
     /// Get current ticker (bid, offer, index)
     Ticker,
 
-    /// Get price history (OHLC candles)
+    /// Get price/index history
     Prices {
-        /// Time resolution
-        #[arg(short, long, default_value = "d1")]
-        resolution: Resolution,
-
-        /// Start timestamp (Unix ms)
+        /// Start timestamp (ISO format or Unix ms)
         #[arg(long)]
-        from: Option<i64>,
+        from: Option<String>,
 
-        /// End timestamp (Unix ms)
+        /// End timestamp (ISO format or Unix ms)
         #[arg(long)]
-        to: Option<i64>,
+        to: Option<String>,
 
-        /// Maximum number of candles
+        /// Maximum number of data points
         #[arg(short, long, default_value = "100")]
         limit: u32,
     },
 
-    /// Get index history
+    /// Get index history (alias for prices)
     Index {
-        /// Start timestamp (Unix ms)
+        /// Start timestamp (ISO format or Unix ms)
         #[arg(long)]
-        from: Option<i64>,
+        from: Option<String>,
 
-        /// End timestamp (Unix ms)
+        /// End timestamp (ISO format or Unix ms)
         #[arg(long)]
-        to: Option<i64>,
+        to: Option<String>,
 
         /// Maximum number of data points
         #[arg(short, long, default_value = "100")]
@@ -51,20 +54,8 @@ pub enum MarketCommands {
     /// Get market information (limits, leverage)
     Info,
 
-    /// Get carrying/funding fees history
-    Fees {
-        /// Start timestamp (Unix ms)
-        #[arg(long)]
-        from: Option<i64>,
-
-        /// End timestamp (Unix ms)
-        #[arg(long)]
-        to: Option<i64>,
-
-        /// Maximum number of records
-        #[arg(short, long, default_value = "100")]
-        limit: u32,
-    },
+    /// Get current funding rate (from ticker)
+    Funding,
 }
 
 #[derive(Debug, Tabled, Serialize)]
@@ -101,48 +92,18 @@ impl From<Ticker> for TickerRow {
 }
 
 #[derive(Debug, Tabled, Serialize)]
-pub struct PriceRow {
+pub struct IndexRow {
     #[tabled(rename = "Time")]
     pub time: String,
-    #[tabled(rename = "Open")]
-    pub open: String,
-    #[tabled(rename = "High")]
-    pub high: String,
-    #[tabled(rename = "Low")]
-    pub low: String,
-    #[tabled(rename = "Close")]
-    pub close: String,
+    #[tabled(rename = "Index")]
+    pub index: String,
 }
 
-impl From<PriceHistory> for PriceRow {
-    fn from(p: PriceHistory) -> Self {
+impl From<IndexEntry> for IndexRow {
+    fn from(e: IndexEntry) -> Self {
         Self {
-            time: chrono::DateTime::from_timestamp_millis(p.time)
-                .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
-                .unwrap_or_else(|| p.time.to_string()),
-            open: format_price(p.open),
-            high: format_price(p.high),
-            low: format_price(p.low),
-            close: format_price(p.close),
-        }
-    }
-}
-
-#[derive(Debug, Tabled, Serialize)]
-pub struct FeeRow {
-    #[tabled(rename = "Time")]
-    pub time: String,
-    #[tabled(rename = "Rate")]
-    pub rate: String,
-}
-
-impl From<CarryingFees> for FeeRow {
-    fn from(f: CarryingFees) -> Self {
-        Self {
-            time: chrono::DateTime::from_timestamp_millis(f.time)
-                .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
-                .unwrap_or_else(|| f.time.to_string()),
-            rate: format!("{:.4}%", f.rate * 100.0),
+            time: e.time,
+            index: format_price(e.index),
         }
     }
 }
@@ -155,39 +116,19 @@ impl MarketCommands {
                 print_single(TickerRow::from(ticker), format)?;
             }
 
-            Self::Prices { resolution, from, to, limit } => {
-                let mut path = format!(
-                    "futures/history/price?resolution={}&limit={}",
-                    resolution.to_minutes(),
-                    limit
-                );
+            Self::Prices { from, to, limit } | Self::Index { from, to, limit } => {
+                // v3 API uses oracle/index for price history
+                let mut path = format!("oracle/index?limit={}", limit);
                 if let Some(f) = from {
-                    path.push_str(&format!("&from={}", f));
+                    path.push_str(&format!("&from={}", urlencoding::encode(f)));
                 }
                 if let Some(t) = to {
-                    path.push_str(&format!("&to={}", t));
+                    path.push_str(&format!("&to={}", urlencoding::encode(t)));
                 }
 
-                let prices: Vec<PriceHistory> = client.public_request(Method::GET, &path).await?;
-                let rows: Vec<PriceRow> = prices.into_iter().map(PriceRow::from).collect();
+                let data: Vec<IndexEntry> = client.public_request(Method::GET, &path).await?;
+                let rows: Vec<IndexRow> = data.into_iter().map(IndexRow::from).collect();
                 print_list(rows, format)?;
-            }
-
-            Self::Index { from, to, limit } => {
-                let mut path = format!("futures/history/index?limit={}", limit);
-                if let Some(f) = from {
-                    path.push_str(&format!("&from={}", f));
-                }
-                if let Some(t) = to {
-                    path.push_str(&format!("&to={}", t));
-                }
-
-                let data: serde_json::Value = client.public_request(Method::GET, &path).await?;
-                match format {
-                    OutputFormat::Json => println!("{}", serde_json::to_string(&data)?),
-                    OutputFormat::JsonPretty => println!("{}", serde_json::to_string_pretty(&data)?),
-                    OutputFormat::Table => println!("{}", serde_json::to_string_pretty(&data)?),
-                }
             }
 
             Self::Info => {
@@ -201,18 +142,27 @@ impl MarketCommands {
                 }
             }
 
-            Self::Fees { from, to, limit } => {
-                let mut path = format!("futures/history/carrying-fees?limit={}", limit);
-                if let Some(f) = from {
-                    path.push_str(&format!("&from={}", f));
+            Self::Funding => {
+                let ticker: Ticker = client.public_request(Method::GET, "futures/ticker").await?;
+                match format {
+                    OutputFormat::Json | OutputFormat::JsonPretty => {
+                        let funding = serde_json::json!({
+                            "fundingRate": ticker.funding_rate,
+                            "fundingTime": ticker.funding_time
+                        });
+                        if format == OutputFormat::Json {
+                            println!("{}", serde_json::to_string(&funding)?);
+                        } else {
+                            println!("{}", serde_json::to_string_pretty(&funding)?);
+                        }
+                    }
+                    OutputFormat::Table => {
+                        println!("Funding Rate: {}", ticker.funding_rate
+                            .map(|r| format!("{:.6}%", r * 100.0))
+                            .unwrap_or_else(|| "-".to_string()));
+                        println!("Next Funding: {}", ticker.funding_time.unwrap_or_else(|| "-".to_string()));
+                    }
                 }
-                if let Some(t) = to {
-                    path.push_str(&format!("&to={}", t));
-                }
-
-                let fees: Vec<CarryingFees> = client.public_request(Method::GET, &path).await?;
-                let rows: Vec<FeeRow> = fees.into_iter().map(FeeRow::from).collect();
-                print_list(rows, format)?;
             }
         }
 
