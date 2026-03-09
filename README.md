@@ -46,11 +46,10 @@ lnmarkets futures list
 
 ```bash
 lnmarkets market ticker                    # Current ticker (bid/ask/index)
-lnmarkets market prices                    # OHLC price history
-lnmarkets market prices -r h1 -l 24        # Last 24 hourly candles
-lnmarkets market index                     # Index history
-lnmarkets market info                      # Market limits and specs
-lnmarkets market fees                      # Funding fee history
+lnmarkets market prices -l 100             # Last 100 index prices (1-min intervals)
+lnmarkets market index -l 50               # Alias for prices
+lnmarkets market info                      # Full ticker data (JSON)
+lnmarkets market funding                   # Current funding rate
 ```
 
 ### Futures Trading (Authenticated)
