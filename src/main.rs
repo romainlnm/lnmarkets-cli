@@ -1,6 +1,7 @@
 mod api;
 mod cli;
 mod config;
+mod mcp;
 mod models;
 
 use anyhow::Result;
@@ -62,6 +63,18 @@ async fn run() -> Result<()> {
             println!("  LNM_API_KEY: {}", if std::env::var("LNM_API_KEY").is_ok() { "set" } else { "not set" });
             println!("  LNM_API_SECRET: {}", if std::env::var("LNM_API_SECRET").is_ok() { "set" } else { "not set" });
             println!("  LNM_API_PASSPHRASE: {}", if std::env::var("LNM_API_PASSPHRASE").is_ok() { "set" } else { "not set" });
+        }
+
+        Commands::Mcp(args) => {
+            use mcp::LnMarketsServer;
+
+            // Load credentials (same as CLI commands)
+            let credentials = config.get_credentials();
+            let client = LnmClient::new(network, Some(credentials))?;
+
+            // Create and run MCP server with configured services and safety mode
+            let server = LnMarketsServer::new(client, &args.services, args.allow_dangerous);
+            server.run().await?;
         }
     }
 

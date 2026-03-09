@@ -4,6 +4,7 @@ pub mod account;
 pub mod funding;
 pub mod auth;
 pub mod output;
+pub mod mcp;
 
 use clap::{Parser, Subcommand};
 use crate::config::{Network, OutputFormat};
@@ -61,4 +62,8 @@ pub enum Commands {
 
     /// Show current configuration
     Config,
+
+    /// Start MCP server for AI agent integration
+    #[command(hide = true)]
+    Mcp(mcp::McpArgs),
 }
