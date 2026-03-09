@@ -6,10 +6,7 @@ use tabled::Tabled;
 
 use crate::api::LnmClient;
 use crate::config::OutputFormat;
-use crate::models::{
-    BitcoinAddress, Deposit, LightningInvoice, Withdrawal,
-    NewDepositRequest, NewWithdrawalRequest,
-};
+use crate::models::{BitcoinAddress, Deposit, LightningInvoice, Withdrawal};
 use super::output::{print_single, print_list, print_success, print_info, format_sats};
 
 #[derive(Subcommand)]
@@ -137,7 +134,7 @@ impl FundingCommands {
     pub async fn execute(&self, client: &LnmClient, format: OutputFormat) -> Result<()> {
         match self {
             Self::NewAddress => {
-                let address: BitcoinAddress = client.request(Method::POST, "user/bitcoin-address", None::<&()>).await?;
+                let address: BitcoinAddress = client.request(Method::POST, "account/address/bitcoin", None::<&()>).await?;
 
                 match format {
                     OutputFormat::Json | OutputFormat::JsonPretty => {
@@ -151,14 +148,13 @@ impl FundingCommands {
             }
 
             Self::Addresses => {
-                let addresses: Vec<BitcoinAddress> = client.request(Method::GET, "user/bitcoin-addresses", None::<&()>).await?;
-                let rows: Vec<AddressRow> = addresses.into_iter().map(AddressRow::from).collect();
-                print_list(rows, format)?;
+                let address: BitcoinAddress = client.request(Method::GET, "account/address/bitcoin", None::<&()>).await?;
+                print_single(AddressRow::from(address), format)?;
             }
 
             Self::Deposit { amount } => {
-                let request = NewDepositRequest { amount: *amount };
-                let invoice: LightningInvoice = client.request(Method::POST, "user/deposit", Some(&request)).await?;
+                let request = serde_json::json!({ "amount": *amount });
+                let invoice: LightningInvoice = client.request(Method::POST, "account/deposit/lightning", Some(&request)).await?;
 
                 match format {
                     OutputFormat::Json => {
@@ -179,20 +175,18 @@ impl FundingCommands {
             }
 
             Self::Deposits { limit } => {
-                let path = format!("user/deposits?limit={}", limit);
+                let path = format!("account/deposits/lightning?limit={}", limit);
                 let deposits: Vec<Deposit> = client.request(Method::GET, &path, None::<&()>).await?;
                 let rows: Vec<DepositRow> = deposits.into_iter().map(DepositRow::from).collect();
                 print_list(rows, format)?;
             }
 
             Self::Withdraw { amount, invoice } => {
-                let request = NewWithdrawalRequest {
-                    amount: *amount,
-                    invoice: Some(invoice.clone()),
-                    address: None,
-                };
+                let request = serde_json::json!({
+                    "invoice": invoice
+                });
 
-                let result: serde_json::Value = client.request(Method::POST, "user/withdraw", Some(&request)).await?;
+                let result: serde_json::Value = client.request(Method::POST, "account/withdraw/lightning", Some(&request)).await?;
 
                 match format {
                     OutputFormat::Json => println!("{}", serde_json::to_string(&result)?),
@@ -204,13 +198,12 @@ impl FundingCommands {
             }
 
             Self::WithdrawOnchain { amount, address } => {
-                let request = NewWithdrawalRequest {
-                    amount: *amount,
-                    invoice: None,
-                    address: Some(address.clone()),
-                };
+                let request = serde_json::json!({
+                    "address": address,
+                    "amountSat": *amount
+                });
 
-                let result: serde_json::Value = client.request(Method::POST, "user/withdraw", Some(&request)).await?;
+                let result: serde_json::Value = client.request(Method::POST, "account/withdraw/on-chain", Some(&request)).await?;
 
                 match format {
                     OutputFormat::Json => println!("{}", serde_json::to_string(&result)?),
@@ -222,7 +215,7 @@ impl FundingCommands {
             }
 
             Self::Withdrawals { limit } => {
-                let path = format!("user/withdrawals?limit={}", limit);
+                let path = format!("account/withdrawals/lightning?limit={}", limit);
                 let withdrawals: Vec<Withdrawal> = client.request(Method::GET, &path, None::<&()>).await?;
                 let rows: Vec<WithdrawalRow> = withdrawals.into_iter().map(WithdrawalRow::from).collect();
                 print_list(rows, format)?;
