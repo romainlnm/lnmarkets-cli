@@ -107,6 +107,9 @@ pub enum FuturesCommands {
 
     /// Cancel all pending orders
     CancelAll,
+
+    /// Close all running trades
+    CloseAll,
 }
 
 // v3 API trade response structure
@@ -399,6 +402,45 @@ impl FuturesCommands {
                     OutputFormat::JsonPretty => println!("{}", serde_json::to_string_pretty(&result)?),
                     OutputFormat::Table => {
                         print_success("All pending orders canceled");
+                    }
+                }
+            }
+
+            Self::CloseAll => {
+                // First, get all running trades
+                let trades: Vec<Trade> = client.request(Method::GET, "futures/isolated/trades/running?limit=100", None::<&()>).await?;
+
+                if trades.is_empty() {
+                    match format {
+                        OutputFormat::Json => println!("[]"),
+                        OutputFormat::JsonPretty => println!("[]"),
+                        OutputFormat::Table => {
+                            print_success("No running trades to close");
+                        }
+                    }
+                    return Ok(());
+                }
+
+                let mut closed_trades: Vec<serde_json::Value> = Vec::new();
+                let mut errors = Vec::new();
+
+                // Close each trade
+                for trade in &trades {
+                    let request = serde_json::json!({ "id": &trade.id });
+                    match client.request::<_, serde_json::Value>(Method::POST, "futures/isolated/trade/close", Some(&request)).await {
+                        Ok(result) => closed_trades.push(result),
+                        Err(e) => errors.push(format!("{}: {}", trade.id, e)),
+                    }
+                }
+
+                match format {
+                    OutputFormat::Json => println!("{}", serde_json::to_string(&closed_trades)?),
+                    OutputFormat::JsonPretty => println!("{}", serde_json::to_string_pretty(&closed_trades)?),
+                    OutputFormat::Table => {
+                        print_success(&format!("Closed {} trade(s)", closed_trades.len()));
+                        if !errors.is_empty() {
+                            eprintln!("Errors: {}", errors.join(", "));
+                        }
                     }
                 }
             }
