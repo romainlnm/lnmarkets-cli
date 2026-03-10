@@ -188,8 +188,8 @@ On error:
 | Command | Description |
 |---------|-------------|
 | `lnmarkets market ticker` | BTC price, bid/ask, funding rate |
-| `lnmarkets market prices [--limit N]` | Index price history |
-| `lnmarkets market index [--from TS] [--to TS]` | Index history with time range |
+| `lnmarkets market prices [--limit 100]` | Index price history |
+| `lnmarkets market index [--from 1704067200] [--to 1704153600]` | Index history with time range |
 | `lnmarkets market info` | Full market information |
 | `lnmarkets market funding` | Current funding rate |
 
@@ -199,20 +199,20 @@ On error:
 |---------|-------------|
 | `lnmarkets account info` | Account details + balance |
 | `lnmarkets account balance` | Balance only |
-| `lnmarkets account update [--username U] [--show-leaderboard]` | Update account settings |
-| `lnmarkets account leaderboard [--period P] [--limit N]` | Top traders |
+| `lnmarkets account update [--username satoshi] [--show-leaderboard]` | Update account settings |
+| `lnmarkets account leaderboard [--period daily] [--limit 10]` | Top traders |
 
 ### Futures Trading (Private)
 
 | Command | Description |
 |---------|-------------|
-| `lnmarkets futures list [--status S] [--limit N]` | List trades (open, running, closed, canceled) |
-| `lnmarkets futures open --side S --quantity Q [--leverage L] [--type T] [--price P] [--stoploss SL] [--takeprofit TP]` | Open position |
+| `lnmarkets futures list [--status running] [--limit 50]` | List trades (open, running, closed, canceled) |
+| `lnmarkets futures open --side buy --quantity 1000 [--leverage 10] [--type market] [--price 50000] [--stoploss 48000] [--takeprofit 55000]` | Open position |
 | `lnmarkets futures close <ID>` | Close running position |
-| `lnmarkets futures stoploss <ID> --price P` | Update stop loss |
-| `lnmarkets futures takeprofit <ID> --price P` | Update take profit |
-| `lnmarkets futures add-margin <ID> --amount A` | Add margin to position |
-| `lnmarkets futures cashin <ID> --amount A` | Partial close (cash in profit) |
+| `lnmarkets futures stoploss <ID> --price 48000` | Update stop loss |
+| `lnmarkets futures takeprofit <ID> --price 55000` | Update take profit |
+| `lnmarkets futures add-margin <ID> --amount 1000` | Add margin to position |
+| `lnmarkets futures cashin <ID> --amount 500` | Partial close (cash in profit) |
 | `lnmarkets futures cancel <ID>` | Cancel pending order |
 | `lnmarkets futures cancel-all` | Cancel all pending orders |
 | `lnmarkets futures close-all` | Close all running trades |
@@ -221,13 +221,13 @@ On error:
 
 | Command | Description |
 |---------|-------------|
-| `lnmarkets funding deposit --amount A` | Generate Lightning invoice |
+| `lnmarkets funding deposit --amount 10000` | Generate Lightning invoice |
 | `lnmarkets funding new-address` | Generate Bitcoin deposit address |
 | `lnmarkets funding addresses` | List deposit addresses |
-| `lnmarkets funding deposits [--limit N]` | Deposit history |
-| `lnmarkets funding withdraw --amount A --invoice I` | Withdraw via Lightning |
-| `lnmarkets funding withdraw-onchain --amount A --address ADDR` | Withdraw on-chain |
-| `lnmarkets funding withdrawals [--limit N]` | Withdrawal history |
+| `lnmarkets funding deposits [--limit 20]` | Deposit history |
+| `lnmarkets funding withdraw --amount 5000 --invoice lnbc...` | Withdraw via Lightning |
+| `lnmarkets funding withdraw-onchain --amount 100000 --address bc1q...` | Withdraw on-chain |
+| `lnmarkets funding withdrawals [--limit 20]` | Withdrawal history |
 
 ### Auth
 
