@@ -43,7 +43,7 @@ Requires [Rust](https://rustup.rs/).
 ```bash
 git clone https://github.com/romainlnm/lnmarkets-cli.git
 cd lnmarkets-cli
-cargo install --path .
+cargo install --path . --locked
 ```
 
 Or build and copy manually:
