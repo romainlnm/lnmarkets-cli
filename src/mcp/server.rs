@@ -1,9 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use std::io::{BufRead, Write};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::api::LnmClient;
 use crate::cli::mcp::{ServiceGroup, parse_services};
@@ -357,45 +357,59 @@ impl LnMarketsServer {
 
     /// Run the MCP server on stdio
     pub async fn run(&self) -> Result<()> {
-        let stdin = std::io::stdin();
-        let mut stdout = std::io::stdout();
+        let stdin = tokio::io::stdin();
+        let mut stdout = tokio::io::stdout();
+        let mut reader = BufReader::new(stdin);
+        let mut line = String::new();
 
-        for line in stdin.lock().lines() {
-            let line = line.context("Failed to read from stdin")?;
+        loop {
+            line.clear();
+            let bytes_read = reader.read_line(&mut line).await?;
+
+            // EOF - client closed connection
+            if bytes_read == 0 {
+                break;
+            }
+
+            let line = line.trim();
             if line.is_empty() {
                 continue;
             }
 
-            let request: JsonRpcRequest = match serde_json::from_str(&line) {
+            let request: JsonRpcRequest = match serde_json::from_str(line) {
                 Ok(req) => req,
                 Err(e) => {
                     let response = JsonRpcResponse::error(None, -32700, format!("Parse error: {}", e));
-                    self.send_response(&mut stdout, &response)?;
+                    self.send_response(&mut stdout, &response).await?;
                     continue;
                 }
             };
 
-            let response = self.handle_request(request).await;
-            self.send_response(&mut stdout, &response)?;
+            // Handle request - notifications return None (no response needed)
+            if let Some(response) = self.handle_request(request).await {
+                self.send_response(&mut stdout, &response).await?;
+            }
         }
 
         Ok(())
     }
 
-    fn send_response(&self, stdout: &mut std::io::Stdout, response: &JsonRpcResponse) -> Result<()> {
+    async fn send_response(&self, stdout: &mut tokio::io::Stdout, response: &JsonRpcResponse) -> Result<()> {
         let json = serde_json::to_string(response)?;
-        writeln!(stdout, "{}", json)?;
-        stdout.flush()?;
+        stdout.write_all(json.as_bytes()).await?;
+        stdout.write_all(b"\n").await?;
+        stdout.flush().await?;
         Ok(())
     }
 
-    async fn handle_request(&self, request: JsonRpcRequest) -> JsonRpcResponse {
-        match request.method.as_str() {
+    async fn handle_request(&self, request: JsonRpcRequest) -> Option<JsonRpcResponse> {
+        // Notifications (methods starting with "notifications/") don't expect a response
+        if request.method.starts_with("notifications/") {
+            return None;
+        }
+
+        let response = match request.method.as_str() {
             "initialize" => self.handle_initialize(request.id),
-            "notifications/initialized" => {
-                // Client notification, no response needed but we return empty for consistency
-                JsonRpcResponse::success(request.id, json!({}))
-            }
             "tools/list" => self.handle_tools_list(request.id),
             "tools/call" => self.handle_tools_call(request.id, request.params).await,
             "ping" => JsonRpcResponse::success(request.id, json!({})),
@@ -404,7 +418,9 @@ impl LnMarketsServer {
                 -32601,
                 format!("Method not found: {}", request.method),
             ),
-        }
+        };
+
+        Some(response)
     }
 
     fn handle_initialize(&self, id: Option<Value>) -> JsonRpcResponse {
