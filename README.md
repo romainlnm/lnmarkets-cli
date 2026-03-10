@@ -168,13 +168,13 @@ On error:
 
 ## Commands
 
-10 MCP tools across 4 service groups. 25 CLI commands across 5 groups.
+10 MCP tools across 4 service groups. 26 CLI commands across 5 groups.
 
 | Group | CLI Commands | MCP Tools | Auth | Description |
 |-------|--------------|-----------|------|-------------|
 | market | 4 | 1 | No | Ticker, prices, index, funding rate |
 | account | 4 | 2 | Yes | Balance, info, leaderboard, list trades |
-| futures | 10 | 5 | Yes | Open, close, update, add margin |
+| futures | 11 | 5 | Yes | Open, close, update, add margin |
 | funding | 7 | 2 | Yes | Deposit, withdraw (Lightning & on-chain) |
 | auth | 4 | — | No | Login, logout, status |
 
@@ -215,6 +215,7 @@ On error:
 | `lnmarkets futures cashin <ID> --amount A` | Partial close (cash in profit) |
 | `lnmarkets futures cancel <ID>` | Cancel pending order |
 | `lnmarkets futures cancel-all` | Cancel all pending orders |
+| `lnmarkets futures close-all` | Close all running trades |
 
 ### Funding (Private)
 
