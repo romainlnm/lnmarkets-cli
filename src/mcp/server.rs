@@ -708,9 +708,14 @@ impl LnMarketsServer {
 
     async fn tool_update_stoploss(&self, args: Value) -> Result<String> {
         let request: UpdateStoplossRequest = serde_json::from_value(args)?;
+        let price = request.price;
         let body = json!({
             "id": request.id,
-            "stoploss": request.price
+            "value": if price.fract() == 0.0 {
+                serde_json::Value::Number((price as i64).into())
+            } else {
+                serde_json::json!(price)
+            }
         });
 
         let result: Value = self
@@ -723,9 +728,14 @@ impl LnMarketsServer {
 
     async fn tool_update_takeprofit(&self, args: Value) -> Result<String> {
         let request: UpdateTakeprofitRequest = serde_json::from_value(args)?;
+        let price = request.price;
         let body = json!({
             "id": request.id,
-            "takeprofit": request.price
+            "value": if price.fract() == 0.0 {
+                serde_json::Value::Number((price as i64).into())
+            } else {
+                serde_json::json!(price)
+            }
         });
 
         let result: Value = self

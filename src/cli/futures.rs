@@ -199,8 +199,14 @@ impl FuturesCommands {
                 };
 
                 let trades: Vec<Trade> = client.request(Method::GET, &path, None::<&()>).await?;
-                let rows: Vec<TradeRow> = trades.into_iter().map(TradeRow::from).collect();
-                print_list(rows, format)?;
+                match format {
+                    OutputFormat::Json => println!("{}", serde_json::to_string(&trades)?),
+                    OutputFormat::JsonPretty => println!("{}", serde_json::to_string_pretty(&trades)?),
+                    OutputFormat::Table => {
+                        let rows: Vec<TradeRow> = trades.into_iter().map(TradeRow::from).collect();
+                        print_list(rows, format)?;
+                    }
+                }
             }
 
             Self::Open {
@@ -263,16 +269,15 @@ impl FuturesCommands {
             }
 
             Self::Stoploss { id, price } => {
-                #[derive(Serialize)]
-                struct StoplossRequest {
-                    id: String,
-                    stoploss: f64,
-                }
-
-                let request = StoplossRequest {
-                    id: id.clone(),
-                    stoploss: *price,
-                };
+                // Try with "value" field name
+                let request = serde_json::json!({
+                    "id": id,
+                    "value": if price.fract() == 0.0 {
+                        serde_json::Value::Number((*price as i64).into())
+                    } else {
+                        serde_json::json!(*price)
+                    }
+                });
 
                 let trade: Trade = client.request(Method::PUT, "futures/isolated/trade/stoploss", Some(&request)).await?;
 
@@ -287,16 +292,14 @@ impl FuturesCommands {
             }
 
             Self::Takeprofit { id, price } => {
-                #[derive(Serialize)]
-                struct TakeprofitRequest {
-                    id: String,
-                    takeprofit: f64,
-                }
-
-                let request = TakeprofitRequest {
-                    id: id.clone(),
-                    takeprofit: *price,
-                };
+                let request = serde_json::json!({
+                    "id": id,
+                    "value": if price.fract() == 0.0 {
+                        serde_json::Value::Number((*price as i64).into())
+                    } else {
+                        serde_json::json!(*price)
+                    }
+                });
 
                 let trade: Trade = client.request(Method::PUT, "futures/isolated/trade/takeprofit", Some(&request)).await?;
 

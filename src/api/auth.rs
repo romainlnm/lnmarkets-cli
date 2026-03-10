@@ -7,7 +7,6 @@ type HmacSha256 = Hmac<Sha256>;
 /// Generate HMAC-SHA256 signature for LN Markets API v3 authentication
 ///
 /// The signature is computed as: Base64(HMAC-SHA256(secret, timestamp + method.lowercase() + path + data))
-/// Note: For v3 API, method must be lowercase
 pub fn generate_signature(
     secret: &str,
     timestamp: u64,
@@ -15,7 +14,6 @@ pub fn generate_signature(
     path: &str,
     data: &str,
 ) -> String {
-    // v3 API uses lowercase method
     let message = format!("{}{}{}{}", timestamp, method.to_lowercase(), path, data);
 
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
