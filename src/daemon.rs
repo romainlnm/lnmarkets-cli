@@ -2,7 +2,7 @@
 //!
 //! Runs agents in a loop, combines signals, and optionally executes trades.
 
-use crate::agents::{pattern::PatternAgent, macro_cal::MacroAgent, Agent, AgentRegistry, Direction, Signal};
+use crate::agents::{pattern::PatternAgent, macro_cal::MacroAgent, news::NewsAgent, Agent, AgentRegistry, Direction, Signal};
 use crate::api::LnmClient;
 use anyhow::Result;
 use std::time::Duration;
@@ -55,7 +55,9 @@ impl Daemon {
                 "macro" => {
                     registry.register(Box::new(MacroAgent::with_defaults()));
                 }
-                // "news" => { ... }
+                "news" => {
+                    registry.register(Box::new(NewsAgent::with_defaults()));
+                }
                 _ => {
                     eprintln!("Unknown agent: {}", agent_name);
                 }
