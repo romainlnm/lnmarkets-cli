@@ -50,14 +50,14 @@ fn default_sources() -> Vec<NewsSource> {
             0.9,
         ),
         NewsSource::new(
-            "The Block",
-            "https://www.theblock.co/rss.xml",
-            0.85,
-        ),
-        NewsSource::new(
             "Decrypt",
             "https://decrypt.co/feed",
             0.75,
+        ),
+        NewsSource::new(
+            "CryptoSlate",
+            "https://cryptoslate.com/feed/",
+            0.7,
         ),
     ]
 }
