@@ -190,10 +190,24 @@ lnmarkets daemon --agents pattern,macro,news,flow --interval 60
 
 | Agent | Data Source | Signals |
 |-------|-------------|---------|
-| `pattern` | Binance (public) | RSI, EMA crossover, Bollinger Bands |
-| `macro` | Economic calendar | Pre/post event warnings (FOMC, CPI, NFP) |
+| `pattern` | Binance Spot API | RSI, EMA crossover, Bollinger Bands |
+| `macro` | ForexFactory API | Pre/post event warnings (FOMC, CPI, NFP) |
 | `news` | RSS feeds | Sentiment analysis from crypto news |
-| `flow` | Binance Futures | Order book imbalance, funding rate, OI, L/S ratio |
+| `flow` | Binance Futures API | Order book imbalance, funding rate, OI, L/S ratio |
+
+All data sources are **public APIs** — no API keys required.
+
+<details>
+<summary>Data source details</summary>
+
+| Agent | Endpoint | Data |
+|-------|----------|------|
+| `pattern` | `api.binance.com/api/v3/klines` | BTC/USDT price candles |
+| `macro` | `nfs.faireconomy.media/ff_calendar_thisweek.json` | Economic calendar events |
+| `news` | CoinDesk, Cointelegraph, Bitcoin Magazine, Decrypt, CryptoSlate | RSS headlines |
+| `flow` | `fapi.binance.com/fapi/v1/depth`, `/fundingRate`, `/openInterest` | Futures market data |
+
+</details>
 
 ### Options
 
