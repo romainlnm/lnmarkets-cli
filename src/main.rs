@@ -1,6 +1,8 @@
+mod agents;
 mod api;
 mod cli;
 mod config;
+mod daemon;
 mod mcp;
 mod models;
 
@@ -75,6 +77,29 @@ async fn run() -> Result<()> {
             // Create and run MCP server with configured services and safety mode
             let server = LnMarketsServer::new(client, &args.services, args.allow_dangerous);
             server.run().await?;
+        }
+
+        Commands::Daemon(args) => {
+            use daemon::{Daemon, DaemonConfig};
+
+            let daemon_config = DaemonConfig {
+                interval_secs: args.interval,
+                dry_run: args.dry_run,
+                min_confidence: args.min_confidence,
+                max_position_sats: args.max_position,
+                agents: args.agents.clone(),
+            };
+
+            // Only load client if not dry run
+            let client = if args.dry_run {
+                None
+            } else {
+                let credentials = config.get_credentials();
+                Some(LnmClient::new(network, Some(credentials))?)
+            };
+
+            let daemon = Daemon::new(daemon_config, client);
+            daemon.run().await?;
         }
     }
 

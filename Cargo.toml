@@ -46,6 +46,9 @@ colored = "2"
 # URL encoding
 urlencoding = "2"
 
+# Agents
+async-trait = "0.1"
+
 [dev-dependencies]
 tokio-test = "0.4"
 

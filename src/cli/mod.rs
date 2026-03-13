@@ -66,4 +66,31 @@ pub enum Commands {
     /// Start MCP server for AI agent integration
     #[command(hide = true)]
     Mcp(mcp::McpArgs),
+
+    /// Run trading daemon with automated agents
+    Daemon(DaemonArgs),
+}
+
+/// Arguments for the daemon command
+#[derive(clap::Args, Debug)]
+pub struct DaemonArgs {
+    /// Analysis interval in seconds
+    #[arg(short, long, default_value = "60")]
+    pub interval: u64,
+
+    /// Dry run mode (no actual trades)
+    #[arg(long, default_value = "true")]
+    pub dry_run: bool,
+
+    /// Minimum confidence threshold (0.0-1.0)
+    #[arg(long, default_value = "0.7")]
+    pub min_confidence: f64,
+
+    /// Maximum position size in sats
+    #[arg(long, default_value = "100000")]
+    pub max_position: u64,
+
+    /// Agents to enable (comma-separated: pattern,macro,news)
+    #[arg(short, long, value_delimiter = ',', default_value = "pattern")]
+    pub agents: Vec<String>,
 }
