@@ -28,6 +28,7 @@ Try these with your AI agent:
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [MCP Server](#mcp-server)
+- [Trading Daemon](#trading-daemon)
 - [Commands](#commands)
 - [API Keys & Configuration](#api-keys--configuration)
 - [License](#license)
@@ -166,9 +167,64 @@ On error:
 }
 ```
 
+## Trading Daemon
+
+Automated trading with multi-agent signal analysis. Runs continuously, combining signals from technical analysis, economic calendar, and news sentiment.
+
+```bash
+lnmarkets daemon --agents pattern,macro,news --interval 60
+```
+
+> [!CAUTION]
+> Dry run mode is enabled by default. To execute real trades, use `--dry-run false`. Start with small position sizes.
+
+### Agents
+
+| Agent | Data Source | Signals |
+|-------|-------------|---------|
+| `pattern` | Binance (public) | RSI, EMA crossover, Bollinger Bands |
+| `macro` | Economic calendar | Pre/post event warnings (FOMC, CPI, NFP) |
+| `news` | RSS feeds | Sentiment analysis from crypto news |
+
+### Options
+
+```bash
+lnmarkets daemon [OPTIONS]
+
+Options:
+  -a, --agents <AGENTS>      Agents to enable [default: pattern]
+  -i, --interval <SECS>      Analysis interval in seconds [default: 60]
+      --dry-run              Dry run mode, no real trades [default: true]
+      --min-confidence <N>   Minimum confidence to act (0.0-1.0) [default: 0.7]
+      --max-position <SATS>  Maximum position size in sats [default: 100000]
+```
+
+### Examples
+
+```bash
+# Pattern analysis only, every 30 seconds
+lnmarkets daemon --agents pattern --interval 30
+
+# All agents, real trading with small positions
+lnmarkets daemon --agents pattern,macro,news --dry-run false --max-position 50000
+
+# Conservative: high confidence threshold
+lnmarkets daemon --agents pattern,macro --min-confidence 0.85
+```
+
+### Sample Output
+
+```
+[14:01:52] Analyzing...
+  ▲ [pattern] LONG (56%): BTC $73493 | RSI 57.1 | EMA9 > EMA21
+  ● [macro] NEUTRAL (60%): POST-EVENT: JOLTS released 1 min ago
+  ● [news] NEUTRAL (50%): 3 articles | 1B/2N/0b
+  → Confidence below threshold, no action
+```
+
 ## Commands
 
-10 MCP tools across 4 service groups. 26 CLI commands across 5 groups.
+10 MCP tools across 4 service groups. 27 CLI commands across 6 groups.
 
 | Group | CLI Commands | MCP Tools | Auth | Description |
 |-------|--------------|-----------|------|-------------|
@@ -177,6 +233,7 @@ On error:
 | futures | 11 | 5 | Yes | Open, close, update, add margin |
 | funding | 7 | 2 | Yes | Deposit, withdraw (Lightning & on-chain) |
 | auth | 4 | — | No | Login, logout, status |
+| daemon | 1 | — | Optional | Automated trading with agents |
 
 7 tools are marked `dangerous` (orders, deposits, withdrawals).
 
