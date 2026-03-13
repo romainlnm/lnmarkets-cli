@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 pub mod pattern;
+pub mod macro_cal;
 
 /// Trading direction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
