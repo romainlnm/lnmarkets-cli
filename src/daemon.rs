@@ -264,25 +264,42 @@ impl Daemon {
     /// Print paper trading statistics
     async fn print_paper_stats(&self) {
         let state = self.paper_state.read().await;
-        let open_trades = state.trades.iter().filter(|t| !t.closed).count();
+        let open_positions: Vec<_> = state.trades.iter().filter(|t| !t.closed).collect();
 
-        if state.trades.is_empty() && open_trades == 0 {
+        if state.trades.is_empty() && open_positions.is_empty() {
             return;
         }
 
-        let pnl_color = if state.total_pnl >= 0 { "\x1b[32m" } else { "\x1b[31m" };
+        // Calculate unrealized P&L for open positions
+        let current_price = self.get_current_price().await.unwrap_or(0.0);
+        let mut unrealized_pnl: i64 = 0;
+
+        for trade in &open_positions {
+            let pnl = match trade.direction {
+                Direction::Long => ((current_price - trade.entry_price) / trade.entry_price * trade.size_sats as f64) as i64,
+                Direction::Short => ((trade.entry_price - current_price) / trade.entry_price * trade.size_sats as f64) as i64,
+                Direction::Neutral => 0,
+            };
+            unrealized_pnl += pnl;
+        }
+
+        let total_pnl = state.total_pnl + unrealized_pnl;
+        let pnl_color = if total_pnl >= 0 { "\x1b[32m" } else { "\x1b[31m" };
+        let unrealized_color = if unrealized_pnl >= 0 { "\x1b[32m" } else { "\x1b[31m" };
         let total = state.wins + state.losses;
         let win_rate = if total > 0 { state.wins as f64 / total as f64 * 100.0 } else { 0.0 };
 
         println!(
-            "  \x1b[36m[PAPER]\x1b[0m Open: {} | Closed: {} | W/L: {}/{} ({:.0}%) | P&L: {}{:+} sats\x1b[0m",
-            open_trades,
+            "  \x1b[36m[PAPER]\x1b[0m Open: {} ({}{:+} sats\x1b[0m) | Closed: {} | W/L: {}/{} ({:.0}%) | Total P&L: {}{:+} sats\x1b[0m",
+            open_positions.len(),
+            unrealized_color,
+            unrealized_pnl,
             total,
             state.wins,
             state.losses,
             win_rate,
             pnl_color,
-            state.total_pnl,
+            total_pnl,
         );
     }
 

@@ -234,6 +234,26 @@ Confidence: 1.15 / 4 = 29%
 → Below 50% threshold, no trade
 ```
 
+### Position Sizing
+
+Position size scales with confidence above the threshold:
+
+```
+size_factor = (confidence - min_confidence) / (1.0 - min_confidence)
+position_sats = max_position × size_factor × 0.5
+```
+
+| Confidence | Threshold | Size Factor | Position (100k max) |
+|------------|-----------|-------------|---------------------|
+| 60% | 50% | 20% | 10,000 sats |
+| 70% | 50% | 40% | 20,000 sats |
+| 80% | 50% | 60% | 30,000 sats |
+| 90% | 50% | 80% | 40,000 sats |
+
+- **Maximum per trade:** 50% of `--max-position`
+- **No limit** on simultaneous positions (yet)
+- Higher confidence = larger position
+
 ### Options
 
 ```bash
