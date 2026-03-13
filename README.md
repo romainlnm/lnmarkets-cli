@@ -172,11 +172,19 @@ On error:
 Automated trading with multi-agent signal analysis. Runs continuously, combining signals from technical analysis, economic calendar, and news sentiment.
 
 ```bash
-lnmarkets daemon --agents pattern,macro,news --interval 60
+lnmarkets daemon --agents pattern,macro,news,flow --interval 60
 ```
 
 > [!CAUTION]
-> Dry run mode is enabled by default. To execute real trades, use `--dry-run false`. Start with small position sizes.
+> Dry run mode is enabled by default. Use `--paper` to test with simulated trades, or `--live` for real trading. Start with small position sizes.
+
+### Trading Modes
+
+| Mode | Flag | Description |
+|------|------|-------------|
+| Dry run | (default) | Analysis only, no trades |
+| Paper | `--paper` | Simulated trades with real prices, tracks P&L |
+| Live | `--live` | Real trades with real sats |
 
 ### Agents
 
@@ -195,7 +203,8 @@ lnmarkets daemon [OPTIONS]
 Options:
   -a, --agents <AGENTS>      Agents to enable [default: pattern]
   -i, --interval <SECS>      Analysis interval in seconds [default: 60]
-      --dry-run              Dry run mode, no real trades [default: true]
+      --paper                Paper trading (simulated with real prices)
+      --live                 Live trading (real sats!)
       --min-confidence <N>   Minimum confidence to act (0.0-1.0) [default: 0.7]
       --max-position <SATS>  Maximum position size in sats [default: 100000]
 ```
@@ -203,25 +212,31 @@ Options:
 ### Examples
 
 ```bash
-# Pattern analysis only, every 30 seconds
-lnmarkets daemon --agents pattern --interval 30
+# Dry run: analysis only
+lnmarkets daemon --agents pattern,flow --interval 30
 
-# All agents, real trading with small positions
-lnmarkets daemon --agents pattern,macro,news,flow --dry-run false --max-position 50000
+# Paper trading: test strategies with real prices
+lnmarkets daemon --paper --agents pattern,macro,news,flow --min-confidence 0.5
 
-# Conservative: high confidence threshold
-lnmarkets daemon --agents pattern,flow --min-confidence 0.85
+# Live trading: real sats (use with caution!)
+lnmarkets daemon --live --agents pattern,flow --max-position 10000
 ```
 
 ### Sample Output
 
 ```
+Starting LN Markets trading daemon...
+  Mode: PAPER TRADING
+  Interval: 30s
+  Min confidence: 50%
+  Agents: ["pattern", "flow"]
+
 [14:01:52] Analyzing...
   ▲ [pattern] LONG (56%): BTC $73493 | RSI 57.1 | EMA9 > EMA21
-  ● [macro] NEUTRAL (60%): POST-EVENT: JOLTS released 1 min ago
-  ● [news] NEUTRAL (50%): 3 articles | 1B/2N/0b
-  ● [flow] NEUTRAL (50%): OB 89%↑ | FR 0.43bps | L/S 0.89 | OI +0.0%
-  → Confidence below threshold, no action
+  ● [flow] NEUTRAL (50%): OB 89%↑ | FR 0.43bps | L/S 0.89
+  → ACTION: BUY 5000 sats (56% confidence)
+  [PAPER OPEN] #1 BUY 5000 sats @ $73493
+  [PAPER] Open: 1 | Closed: 0 | W/L: 0/0 (0%) | P&L: +0 sats
 ```
 
 ## Commands
