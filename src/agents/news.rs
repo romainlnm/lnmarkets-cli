@@ -10,7 +10,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// News source with credibility weight
 #[derive(Debug, Clone)]
@@ -122,6 +123,8 @@ pub struct NewsConfig {
     pub min_relevance: f64,
     /// Number of recent items to analyze
     pub max_items: usize,
+    /// Cache TTL in minutes (avoid rate limiting)
+    pub cache_ttl_mins: i64,
 }
 
 impl Default for NewsConfig {
@@ -130,8 +133,15 @@ impl Default for NewsConfig {
             max_age_hours: 4,
             min_relevance: 0.3,
             max_items: 20,
+            cache_ttl_mins: 5, // Refresh every 5 minutes
         }
     }
+}
+
+/// Cached news data
+struct NewsCache {
+    items: Vec<NewsItem>,
+    fetched_at: DateTime<Utc>,
 }
 
 /// News Agent implementation
@@ -140,6 +150,7 @@ pub struct NewsAgent {
     sources: Vec<NewsSource>,
     keywords: SentimentKeywords,
     http_client: reqwest::Client,
+    cache: Arc<RwLock<Option<NewsCache>>>,
 }
 
 impl NewsAgent {
@@ -152,11 +163,46 @@ impl NewsAgent {
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap_or_default(),
+            cache: Arc::new(RwLock::new(None)),
         }
     }
 
     pub fn with_defaults() -> Self {
         Self::new(NewsConfig::default())
+    }
+
+    /// Check if cache is still valid
+    async fn is_cache_valid(&self) -> bool {
+        let cache = self.cache.read().await;
+        if let Some(ref c) = *cache {
+            let age = Utc::now() - c.fetched_at;
+            age.num_minutes() < self.config.cache_ttl_mins
+        } else {
+            false
+        }
+    }
+
+    /// Get cached items or fetch new ones
+    async fn get_news(&self) -> Vec<NewsItem> {
+        // Check cache first
+        if self.is_cache_valid().await {
+            let cache = self.cache.read().await;
+            if let Some(ref c) = *cache {
+                return c.items.clone();
+            }
+        }
+
+        // Fetch fresh data
+        let items = self.fetch_all_news().await;
+
+        // Update cache
+        let mut cache = self.cache.write().await;
+        *cache = Some(NewsCache {
+            items: items.clone(),
+            fetched_at: Utc::now(),
+        });
+
+        items
     }
 
     /// Fetch and parse RSS feed
@@ -406,7 +452,7 @@ impl Agent for NewsAgent {
     }
 
     async fn analyze(&self) -> Result<Signal> {
-        let items = self.fetch_all_news().await;
+        let items = self.get_news().await;
         Ok(self.analyze_news(&items))
     }
 }
