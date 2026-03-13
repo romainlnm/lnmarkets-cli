@@ -80,22 +80,31 @@ async fn run() -> Result<()> {
         }
 
         Commands::Daemon(args) => {
-            use daemon::{Daemon, DaemonConfig};
+            use daemon::{Daemon, DaemonConfig, TradingMode};
+
+            // Determine trading mode
+            let mode = if args.live {
+                TradingMode::Live
+            } else if args.paper {
+                TradingMode::Paper
+            } else {
+                TradingMode::DryRun
+            };
 
             let daemon_config = DaemonConfig {
                 interval_secs: args.interval,
-                dry_run: args.dry_run,
+                mode,
                 min_confidence: args.min_confidence,
                 max_position_sats: args.max_position,
                 agents: args.agents.clone(),
             };
 
-            // Only load client if not dry run
-            let client = if args.dry_run {
-                None
-            } else {
+            // Only load client for live trading
+            let client = if mode == TradingMode::Live {
                 let credentials = config.get_credentials();
                 Some(LnmClient::new(network, Some(credentials))?)
+            } else {
+                None
             };
 
             let daemon = Daemon::new(daemon_config, client);

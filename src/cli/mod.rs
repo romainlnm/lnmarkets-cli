@@ -78,9 +78,13 @@ pub struct DaemonArgs {
     #[arg(short, long, default_value = "60")]
     pub interval: u64,
 
-    /// Dry run mode (no actual trades)
-    #[arg(long, default_value = "true")]
-    pub dry_run: bool,
+    /// Paper trading mode (simulated trades with real prices)
+    #[arg(long)]
+    pub paper: bool,
+
+    /// Live trading mode (real trades - use with caution!)
+    #[arg(long)]
+    pub live: bool,
 
     /// Minimum confidence threshold (0.0-1.0)
     #[arg(long, default_value = "0.7")]
@@ -90,7 +94,7 @@ pub struct DaemonArgs {
     #[arg(long, default_value = "100000")]
     pub max_position: u64,
 
-    /// Agents to enable (comma-separated: pattern,macro,news)
+    /// Agents to enable (comma-separated: pattern,macro,news,flow)
     #[arg(short, long, value_delimiter = ',', default_value = "pattern")]
     pub agents: Vec<String>,
 }
