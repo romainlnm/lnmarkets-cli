@@ -185,6 +185,7 @@ lnmarkets daemon --agents pattern,macro,news --interval 60
 | `pattern` | Binance (public) | RSI, EMA crossover, Bollinger Bands |
 | `macro` | Economic calendar | Pre/post event warnings (FOMC, CPI, NFP) |
 | `news` | RSS feeds | Sentiment analysis from crypto news |
+| `flow` | Binance Futures | Order book imbalance, funding rate, OI, L/S ratio |
 
 ### Options
 
@@ -206,10 +207,10 @@ Options:
 lnmarkets daemon --agents pattern --interval 30
 
 # All agents, real trading with small positions
-lnmarkets daemon --agents pattern,macro,news --dry-run false --max-position 50000
+lnmarkets daemon --agents pattern,macro,news,flow --dry-run false --max-position 50000
 
 # Conservative: high confidence threshold
-lnmarkets daemon --agents pattern,macro --min-confidence 0.85
+lnmarkets daemon --agents pattern,flow --min-confidence 0.85
 ```
 
 ### Sample Output
@@ -219,6 +220,7 @@ lnmarkets daemon --agents pattern,macro --min-confidence 0.85
   ▲ [pattern] LONG (56%): BTC $73493 | RSI 57.1 | EMA9 > EMA21
   ● [macro] NEUTRAL (60%): POST-EVENT: JOLTS released 1 min ago
   ● [news] NEUTRAL (50%): 3 articles | 1B/2N/0b
+  ● [flow] NEUTRAL (50%): OB 89%↑ | FR 0.43bps | L/S 0.89 | OI +0.0%
   → Confidence below threshold, no action
 ```
 
