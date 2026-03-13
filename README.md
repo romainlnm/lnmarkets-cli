@@ -209,6 +209,31 @@ All data sources are **public APIs** — no API keys required.
 
 </details>
 
+### Signal Aggregation
+
+Each agent produces a signal with **direction** (Long/Short/Neutral) and **confidence** (0.0-1.0).
+
+The orchestrator combines signals using weighted voting:
+
+1. **Sum weights by direction** — Long signals add confidence to `long_weight`, Short to `short_weight`
+2. **Choose direction** — Whichever side has higher total weight wins
+3. **Calculate final confidence** — `max(long_weight, short_weight) / number_of_agents`
+4. **Apply threshold** — Only act if confidence ≥ `--min-confidence`
+5. **Size position** — Higher confidence = larger position (up to `--max-position`)
+
+**Example with 4 agents:**
+```
+pattern: LONG  60%  →  long_weight += 0.60
+macro:   NEUTRAL     →  (ignored)
+news:    LONG  55%  →  long_weight += 0.55
+flow:    SHORT 40%  →  short_weight += 0.40
+
+long_weight = 1.15, short_weight = 0.40
+Direction: LONG (1.15 > 0.40)
+Confidence: 1.15 / 4 = 29%
+→ Below 50% threshold, no trade
+```
+
 ### Options
 
 ```bash
