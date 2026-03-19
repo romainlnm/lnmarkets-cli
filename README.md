@@ -169,7 +169,7 @@ On error:
 
 ## Trading Daemon
 
-Automated trading with multi-agent signal analysis. Runs continuously, combining signals from technical analysis, economic calendar, and news sentiment.
+Automated trading with multi-agent signal analysis. Runs continuously, combining signals from technical analysis, economic calendar, and news sentiment. Uses **cross margin** trading — all positions share the same margin pool.
 
 ```bash
 lnmarkets daemon --agents pattern,macro,news,flow --interval 60
