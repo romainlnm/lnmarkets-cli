@@ -415,34 +415,46 @@ Starting LN Markets trading daemon...
 
 ## Stats Dashboard
 
-Track your daemon trading performance. Stats are fetched from the LN Markets API, filtered to trades opened by the daemon.
+Track your daemon trading performance. Stats are fetched from the LN Markets API, filtered to orders placed by the daemon.
 
 ```bash
 lnmarkets stats              # Show stats summary
-lnmarkets stats --trades     # List recent trades
-lnmarkets stats --trades -l 20  # Last 20 trades
+lnmarkets stats --trades     # List recent orders
+lnmarkets stats --trades -l 20  # Last 20 orders
 ```
 
 ### Sample Output
 
 ```
-Trading Stats (daemon trades only)
-───────────────────────────────────
-Trades:      47 total (1 open, 46 closed)
-Win/Loss:    32 / 14 (69.6%)
-Total P&L:   +12,450 sats
-Best trade:  +2,100 sats
-Worst trade: -890 sats
-Avg P&L:     +270 sats
-Streak:      3W 🔥
+Daemon Stats (cross margin)
+────────────────────────────────────────
+Orders placed:   47
+Total bought:    $120 USD
+Total sold:      $85 USD
+Trading fees:    235 sats
+
+Current Position:
+  LONG $35 @ $68500
+  Margin: 50000 sats
+  P&L:    +1250 sats
+```
+
+With `--trades`:
+
+```
+Daemon Orders (3 total)
+──────────────────────────────────────────────────
+  ▲ BUY $10 @ $68200 (fee: 5 sats) - 2026-03-19T14:30
+  ▼ SELL $5 @ $68500 (fee: 3 sats) - 2026-03-19T15:45
+  ▲ BUY $30 @ $68400 (fee: 15 sats) - 2026-03-19T16:20
 ```
 
 ### How It Works
 
-- Daemon saves trade IDs to `~/.config/lnmarkets/daemon_trades.txt`
-- Stats command fetches trade data from LN Markets API
-- Filters to daemon trades only (excludes manual trades)
-- P&L always up-to-date from the API
+- Daemon saves order IDs when placing cross margin orders
+- Stats fetches order history from `futures/cross/orders/filled`
+- Shows current cross position with unrealized P&L
+- Cross margin aggregates all orders into a single position
 
 ## Commands
 
@@ -538,7 +550,9 @@ export LNM_API_PASSPHRASE="your-passphrase"
 
 ### Config file (for humans)
 
-Store credentials in `~/.config/lnmarkets/config.toml`:
+Store credentials in the config file:
+- **Linux**: `~/.config/lnmarkets/config.toml`
+- **macOS**: `~/Library/Application Support/lnmarkets/config.toml`
 
 ```toml
 [credentials]
@@ -558,7 +572,7 @@ Or use the interactive setup: `lnmarkets auth login`.
 Highest precedence first:
 
 1. Environment variables (`LNM_API_KEY`, `LNM_API_SECRET`, `LNM_API_PASSPHRASE`)
-2. Config file (`~/.config/lnmarkets/config.toml`)
+2. Config file (platform-specific path above)
 
 ### Global options
 
