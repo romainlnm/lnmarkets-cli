@@ -191,7 +191,7 @@ lnmarkets daemon --agents pattern,macro,news,flow --interval 60
 | Agent | Data Source | Signals |
 |-------|-------------|---------|
 | `pattern` | Binance Spot API | RSI, EMA crossover, Bollinger Bands |
-| `macro` | ForexFactory API | Pre/post event warnings (FOMC, CPI, NFP) |
+| `macro` | TradingView API | Pre/post event warnings (FOMC, CPI, NFP) |
 | `news` | RSS feeds | Sentiment analysis from crypto news |
 | `flow` | Binance Futures API | Order book imbalance, funding rate, OI, L/S ratio |
 
@@ -203,7 +203,7 @@ All data sources are **public APIs** — no API keys required.
 | Agent | Endpoint | Data |
 |-------|----------|------|
 | `pattern` | `api.binance.com/api/v3/klines` | BTC/USDT price candles |
-| `macro` | `nfs.faireconomy.media/ff_calendar_thisweek.json` | Economic calendar events |
+| `macro` | `economic-calendar.tradingview.com/events` | Economic calendar (14-day lookahead) |
 | `news` | CoinDesk, Cointelegraph, Bitcoin Magazine, Decrypt, CryptoSlate | RSS headlines |
 | `flow` | `fapi.binance.com/fapi/v1/depth`, `/fundingRate`, `/openInterest` | Futures market data |
 
@@ -253,18 +253,18 @@ Position size scales with confidence above the threshold:
 
 ```
 size_factor = (confidence - min_confidence) / (1.0 - min_confidence)
-position_sats = max_position × size_factor × 0.5
+position_usd = max_position × size_factor × 0.5
 ```
 
-| Confidence | Threshold | Size Factor | Position (100k max) |
+| Confidence | Threshold | Size Factor | Position ($100 max) |
 |------------|-----------|-------------|---------------------|
-| 60% | 50% | 20% | 10,000 sats |
-| 70% | 50% | 40% | 20,000 sats |
-| 80% | 50% | 60% | 30,000 sats |
-| 90% | 50% | 80% | 40,000 sats |
+| 60% | 50% | 20% | $10 |
+| 70% | 50% | 40% | $20 |
+| 80% | 50% | 60% | $30 |
+| 90% | 50% | 80% | $40 |
 
 - **Maximum per trade:** 50% of `--max-position`
-- **No limit** on simultaneous positions (yet)
+- **Cross margin:** All positions share the same margin pool
 - Higher confidence = larger position
 
 ### Options
@@ -276,9 +276,10 @@ Options:
   -a, --agents <AGENTS>      Agents to enable [default: pattern]
   -i, --interval <SECS>      Analysis interval in seconds [default: 60]
       --paper                Paper trading (simulated with real prices)
-      --live                 Live trading (real sats!)
+      --live                 Live trading (real money!)
       --min-confidence <N>   Minimum confidence to act (0.0-1.0) [default: 0.5]
-      --max-position <SATS>  Maximum position size in sats [default: 100000]
+      --max-position <USD>   Maximum position size in USD [default: 10]
+      --leverage <N>         Leverage (1-100) [default: 10]
 ```
 
 ### Examples
@@ -290,25 +291,31 @@ lnmarkets daemon --agents pattern,flow --interval 30
 # Paper trading: test strategies with real prices
 lnmarkets daemon --paper --agents pattern,macro,news,flow --min-confidence 0.5
 
-# Live trading: real sats (use with caution!)
-lnmarkets daemon --live --agents pattern,flow --max-position 10000
+# Live trading: $20 max position at 10x leverage
+lnmarkets daemon --live --agents pattern,flow --max-position 20 --leverage 10
+
+# Conservative: smaller positions, higher confidence required
+lnmarkets daemon --live --agents pattern,macro,news,flow --max-position 10 --leverage 5 --min-confidence 0.7
 ```
 
 ### Sample Output
 
 ```
 Starting LN Markets trading daemon...
-  Mode: PAPER TRADING
-  Interval: 30s
+  Mode: LIVE TRADING
+  Interval: 60s
   Min confidence: 50%
-  Agents: ["pattern", "flow"]
+  Max position: $20 USD
+  Leverage: 10x
+  Agents: ["pattern", "flow", "news", "macro"]
 
-[14:01:52] Analyzing...
-  ▲ [pattern] LONG (56%): BTC $73493 | RSI 57.1 | EMA9 > EMA21
-  ● [flow] NEUTRAL (50%): OB 89%↑ | FR 0.43bps | L/S 0.89
-  → ACTION: BUY 5000 sats (56% confidence)
-  [PAPER OPEN] #1 BUY 5000 sats @ $73493
-  [PAPER] Open: 1 | Closed: 0 | W/L: 0/0 (0%) | P&L: +0 sats
+[13:54:10] Analyzing...
+  ▲ [pattern] LONG (30%): BTC $69876 | RSI: 77.9 | EMA9: 69813 EMA21: 69673 | RSI overbought
+  ▼ [flow] SHORT (83%): OB -83%↓ | FR -0.30bps | L/S 1.51 | OI +0.0% | ask imbalance, crowded long
+  ● [news] NEUTRAL (50%): 6 articles | 1B/4N/1b | [Cointelegraph] Bitcoin ETF...
+  ● [macro] NEUTRAL (50%): Next: JOLTs Job Openings in 12d
+  → ACTION: SELL $6 USD @ 10x (83% confidence)
+  [LIVE] Order placed: 3b67d720-01eb-4306-9722-65030cdd7a6f
 ```
 
 ## Commands
