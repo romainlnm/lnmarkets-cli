@@ -98,17 +98,26 @@ impl MacroAgent {
 
         for event in events {
             // Skip if no actual value or low importance
-            let actual = event.actual?;
-            let forecast = event.forecast?;
+            let actual = match event.actual {
+                Some(a) => a,
+                None => continue,
+            };
+            let forecast = match event.forecast {
+                Some(f) => f,
+                None => continue,
+            };
             let importance = event.importance;
 
-            // Only consider medium+ importance
+            // Only consider medium+ importance (importance >= 0)
             if importance < 0 {
                 continue;
             }
 
             // Check if event was within lookback window
-            let event_time = chrono::DateTime::parse_from_rfc3339(&event.date).ok()?;
+            let event_time = match chrono::DateTime::parse_from_rfc3339(&event.date) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
             let mins_ago = (now - event_time.with_timezone(&Utc)).num_minutes();
             if mins_ago < 0 || mins_ago > self.config.lookback_hours * 60 {
                 continue;
