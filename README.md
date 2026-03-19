@@ -29,6 +29,7 @@ Try these with your AI agent:
 - [Quick Start](#quick-start)
 - [MCP Server](#mcp-server)
 - [Trading Daemon](#trading-daemon)
+- [Stats Dashboard](#stats-dashboard)
 - [Commands](#commands)
 - [API Keys & Configuration](#api-keys--configuration)
 - [License](#license)
@@ -397,9 +398,47 @@ Starting LN Markets trading daemon...
   [LIVE] Order placed: 5eeb79e3-88cc-4399-9b77-c61a8b507be0
 ```
 
+## Stats Dashboard
+
+Track your trading performance with persistent statistics.
+
+```bash
+lnmarkets stats              # Show all stats
+lnmarkets stats --live       # Live trading only
+lnmarkets stats --paper      # Paper trading only
+lnmarkets stats --trades     # List recent trades
+lnmarkets stats --trades -l 20  # Last 20 trades
+```
+
+### Sample Output
+
+```
+LIVE Trading Stats
+──────────────────────────────
+Trades:      47 total (1 open)
+Win/Loss:    32 / 14 (69.6%)
+Total P&L:   +12,450 sats
+Best trade:  +2,100 sats
+Worst trade: -890 sats
+Avg P&L:     +270 sats
+Streak:      3W 🔥
+Avg hold:    23 min
+```
+
+### What's Tracked
+
+- Win/loss ratio and win rate
+- Total P&L in sats
+- Best and worst trades
+- Current win/loss streak
+- Average hold time
+- Confidence and agents used per trade
+
+Data stored locally in `~/.config/lnmarkets/stats.db` (SQLite).
+
 ## Commands
 
-10 MCP tools across 4 service groups. 27 CLI commands across 6 groups.
+10 MCP tools across 4 service groups. 28 CLI commands across 7 groups.
 
 | Group | CLI Commands | MCP Tools | Auth | Description |
 |-------|--------------|-----------|------|-------------|
@@ -409,6 +448,7 @@ Starting LN Markets trading daemon...
 | funding | 7 | 2 | Yes | Deposit, withdraw (Lightning & on-chain) |
 | auth | 4 | — | No | Login, logout, status |
 | daemon | 1 | — | Optional | Automated trading with agents |
+| stats | 1 | — | No | Trading performance dashboard |
 
 7 tools are marked `dangerous` (orders, deposits, withdrawals).
 
