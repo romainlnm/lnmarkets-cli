@@ -139,7 +139,7 @@ impl Daemon {
         }
     }
 
-    /// Fetch current BTC price from Binance
+    /// Fetch current BTC price from Binance (for agents)
     async fn get_current_price(&self) -> Result<f64> {
         let url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT";
         let client = reqwest::Client::new();
@@ -148,6 +148,25 @@ impl Daemon {
             .ok_or_else(|| anyhow::anyhow!("No price in response"))?
             .parse::<f64>()?;
         Ok(price)
+    }
+
+    /// Fetch bid/ask prices from LN Markets ticker
+    async fn get_lnm_prices(&self) -> Result<(f64, f64)> {
+        use crate::models::market::Ticker;
+        use reqwest::Method;
+
+        let client = self.client.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No client configured"))?;
+
+        let ticker: Ticker = client
+            .public_request(Method::GET, "futures/ticker")
+            .await?;
+
+        let (bid, ask) = ticker.prices.first()
+            .map(|p| (p.bid_price, p.ask_price))
+            .unwrap_or((ticker.index, ticker.index));
+
+        Ok((bid, ask))
     }
 
     /// Get current cross margin position
@@ -169,8 +188,32 @@ impl Daemon {
         let side = if quantity > 0.0 { Direction::Long } else { Direction::Short };
         let entry_price = resp["entryPrice"].as_f64().unwrap_or(0.0);
         let margin = resp["margin"].as_f64().unwrap_or(0.0);
-        let pl = resp["pl"].as_f64().unwrap_or(0.0);
-        let pl_pct = if margin > 0.0 { (pl / margin) * 100.0 } else { 0.0 };
+        let leverage = resp["leverage"].as_f64().unwrap_or(self.config.leverage as f64);
+
+        // Calculate live P&L using LN Markets bid/ask (actual exit price)
+        // Long closes at bid (sell), Short closes at ask (buy)
+        let (bid, ask) = self.get_lnm_prices().await.unwrap_or((entry_price, entry_price));
+        let exit_price = match side {
+            Direction::Long => bid,   // Sell at bid to close long
+            Direction::Short => ask,  // Buy at ask to close short
+            Direction::Neutral => entry_price,
+        };
+
+        let price_change_pct = if entry_price > 0.0 {
+            (exit_price - entry_price) / entry_price * 100.0
+        } else {
+            0.0
+        };
+
+        // For long: price up = profit. For short: price down = profit.
+        let pl_pct = match side {
+            Direction::Long => price_change_pct * leverage,
+            Direction::Short => -price_change_pct * leverage,
+            Direction::Neutral => 0.0,
+        };
+
+        // Estimate P&L in sats (margin * pl_pct / 100)
+        let pl = margin * pl_pct / 100.0;
 
         Some(CrossPosition {
             side,
