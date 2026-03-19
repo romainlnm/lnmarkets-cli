@@ -116,95 +116,117 @@ async fn run() -> Result<()> {
         }
 
         Commands::Stats(args) => {
-            use stats::{load_trade_ids, calculate_stats, format_stats, TradeInfo};
+            use stats::load_trade_ids;
             use reqwest::Method;
 
-            // Load daemon trade IDs
+            // Load daemon order IDs
             let daemon_ids = load_trade_ids()?;
 
             if daemon_ids.is_empty() {
-                println!("No daemon trades recorded yet. Run the daemon with --live to start trading!");
+                println!("No daemon orders recorded yet. Run the daemon with --live to start trading!");
                 return Ok(());
             }
 
-            // Fetch trades from API
+            // Fetch data from API
             let credentials = config.get_credentials();
             let client = LnmClient::new(network, Some(credentials))?;
 
-            // Fetch closed trades
-            let closed: Vec<serde_json::Value> = client
-                .request(Method::GET, "futures/closed?limit=100", None::<&()>)
+            // Fetch cross margin filled orders (history)
+            let cross_history: serde_json::Value = client
+                .request(Method::GET, "futures/cross/orders/filled?limit=100", None::<&serde_json::Value>)
                 .await
                 .unwrap_or_default();
 
-            // Fetch running trades
-            let running: Vec<serde_json::Value> = client
-                .request(Method::GET, "futures/running", None::<&()>)
+            let cross_orders: Vec<serde_json::Value> = cross_history["data"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+
+            // Fetch current cross position
+            let position: serde_json::Value = client
+                .request(Method::GET, "futures/cross/position", None::<&serde_json::Value>)
                 .await
                 .unwrap_or_default();
 
-            // Filter to daemon trades only and convert to TradeInfo
-            let mut trades: Vec<TradeInfo> = Vec::new();
+            // Filter to daemon orders only
+            let daemon_orders: Vec<_> = cross_orders.iter()
+                .filter(|o| {
+                    let id = o["id"].as_str().unwrap_or_default();
+                    daemon_ids.contains(id)
+                })
+                .collect();
 
-            for trade in closed.iter().chain(running.iter()) {
-                let id = trade["id"].as_str().unwrap_or_default().to_string();
-                if !daemon_ids.contains(&id) {
-                    continue;
+            // Calculate stats from orders
+            let total_orders = daemon_orders.len();
+            let mut buy_qty = 0.0;
+            let mut sell_qty = 0.0;
+            let mut total_fees = 0i64;
+
+            for order in &daemon_orders {
+                let qty = order["quantity"].as_f64().unwrap_or(0.0);
+                let fee = order["tradingFee"].as_i64().unwrap_or(0);
+                total_fees += fee;
+
+                match order["side"].as_str() {
+                    Some("buy") => buy_qty += qty,
+                    Some("sell") => sell_qty += qty,
+                    _ => {}
                 }
-
-                let side = if trade["side"].as_str() == Some("b") { "long" } else { "short" };
-                let quantity = trade["quantity"].as_f64().unwrap_or(0.0);
-                let entry_price = trade["price"].as_f64().unwrap_or(0.0);
-                let exit_price = trade["exit_price"].as_f64();
-                let pl = trade["pl"].as_i64().unwrap_or(0);
-                let closed = trade["closed"].as_bool().unwrap_or(false);
-                let creation_ts = trade["creation_ts"].as_i64().unwrap_or(0);
-                let last_update_ts = trade["last_update_ts"].as_i64().unwrap_or(0);
-
-                trades.push(TradeInfo {
-                    id,
-                    side: side.to_string(),
-                    quantity,
-                    entry_price,
-                    exit_price,
-                    pl,
-                    closed,
-                    creation_ts,
-                    last_update_ts,
-                });
             }
 
-            // Sort by creation time
-            trades.sort_by_key(|t| t.creation_ts);
+            // Current position info
+            let pos_qty = position["quantity"].as_f64().unwrap_or(0.0);
+            let pos_entry = position["entryPrice"].as_f64().unwrap_or(0.0);
+            let pos_margin = position["margin"].as_f64().unwrap_or(0.0);
+            let pos_pl = position["pl"].as_f64().unwrap_or(0.0);
+            let pos_side = if pos_qty > 0.0 { "LONG" } else if pos_qty < 0.0 { "SHORT" } else { "FLAT" };
+
+            // Print stats
+            println!("\nDaemon Stats (cross margin)");
+            println!("{}", "─".repeat(40));
+            println!("Orders placed:   {}", total_orders);
+            println!("Total bought:    ${:.0} USD", buy_qty);
+            println!("Total sold:      ${:.0} USD", sell_qty);
+            println!("Trading fees:    {} sats", total_fees);
+            println!();
+
+            if pos_qty.abs() > 0.0 {
+                let pl_color = if pos_pl >= 0.0 { "\x1b[32m" } else { "\x1b[31m" };
+                println!("Current Position:");
+                println!("  {} ${:.0} @ ${:.0}", pos_side, pos_qty.abs(), pos_entry);
+                println!("  Margin: {:.0} sats", pos_margin);
+                println!("  P&L:    {}{:+.0} sats\x1b[0m", pl_color, pos_pl);
+            } else {
+                println!("Current Position: FLAT (no open position)");
+            }
 
             if args.trades {
-                // Show recent trades
-                println!("\nDaemon Trades ({} total)", trades.len());
-                println!("{}", "─".repeat(60));
+                // Show recent orders
+                println!("\nDaemon Orders ({} total)", daemon_orders.len());
+                println!("{}", "─".repeat(50));
 
-                let display_trades: Vec<_> = trades.iter().rev().take(args.limit as usize).collect();
+                let display_orders: Vec<_> = daemon_orders.iter().rev().take(args.limit as usize).collect();
 
-                for trade in display_trades {
-                    let status = if trade.closed { "CLOSED" } else { "OPEN" };
-                    let dir_icon = if trade.side == "long" { "▲" } else { "▼" };
-                    let pnl_color = if trade.pl >= 0 { "\x1b[32m" } else { "\x1b[31m" };
+                for order in display_orders {
+                    let side = order["side"].as_str().unwrap_or("?");
+                    let dir_icon = if side == "buy" { "\x1b[32m▲\x1b[0m" } else { "\x1b[31m▼\x1b[0m" };
+                    let qty = order["quantity"].as_f64().unwrap_or(0.0);
+                    let price = order["price"].as_f64().unwrap_or(0.0);
+                    let fee = order["tradingFee"].as_i64().unwrap_or(0);
+                    let time = order["filledAt"].as_str().unwrap_or("?");
+
                     println!(
-                        "  {} {} ${:.0} @ ${:.0} | {}{:+} sats\x1b[0m | {}",
+                        "  {} {} ${:.0} @ ${:.0} (fee: {} sats) - {}",
                         dir_icon,
-                        trade.side.to_uppercase(),
-                        trade.quantity,
-                        trade.entry_price,
-                        pnl_color,
-                        trade.pl,
-                        status,
+                        side.to_uppercase(),
+                        qty,
+                        price,
+                        fee,
+                        &time[..16], // Truncate timestamp
                     );
                 }
-                println!();
-            } else {
-                // Show stats summary
-                let stats = calculate_stats(&trades);
-                println!("{}", format_stats(&stats));
             }
+            println!();
         }
     }
 
