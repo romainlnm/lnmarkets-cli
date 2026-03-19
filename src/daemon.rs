@@ -41,7 +41,7 @@ impl Default for DaemonConfig {
         Self {
             interval_secs: 60,
             mode: TradingMode::DryRun,
-            min_confidence: 0.7,
+            min_confidence: 0.5,
             max_position_sats: 100_000,
             agents: vec!["pattern".to_string()],
         }
@@ -312,29 +312,36 @@ impl Daemon {
         // Calculate weighted direction
         let mut long_weight = 0.0;
         let mut short_weight = 0.0;
+        let mut long_count = 0;
+        let mut short_count = 0;
 
         for signal in signals {
             match signal.direction {
-                Direction::Long => long_weight += signal.confidence,
-                Direction::Short => short_weight += signal.confidence,
+                Direction::Long => {
+                    long_weight += signal.confidence;
+                    long_count += 1;
+                }
+                Direction::Short => {
+                    short_weight += signal.confidence;
+                    short_count += 1;
+                }
                 Direction::Neutral => {}
             }
         }
 
-        let total = long_weight + short_weight;
-        if total == 0.0 {
+        // Need at least one directional signal
+        if long_count == 0 && short_count == 0 {
             return None;
         }
 
-        let direction = if long_weight > short_weight {
-            Direction::Long
+        // Direction and confidence based on winning side only
+        let (direction, confidence) = if long_weight > short_weight {
+            (Direction::Long, long_weight / long_count as f64)
         } else if short_weight > long_weight {
-            Direction::Short
+            (Direction::Short, short_weight / short_count as f64)
         } else {
             return None;
         };
-
-        let confidence = (long_weight.max(short_weight)) / signals.len() as f64;
 
         if confidence < self.config.min_confidence {
             println!(

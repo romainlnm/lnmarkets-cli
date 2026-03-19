@@ -217,21 +217,34 @@ The orchestrator combines signals using weighted voting:
 
 1. **Sum weights by direction** — Long signals add confidence to `long_weight`, Short to `short_weight`
 2. **Choose direction** — Whichever side has higher total weight wins
-3. **Calculate final confidence** — `max(long_weight, short_weight) / number_of_agents`
+3. **Calculate final confidence** — Average of winning direction's signals only (opposing signals don't dilute confidence)
 4. **Apply threshold** — Only act if confidence ≥ `--min-confidence`
 5. **Size position** — Higher confidence = larger position (up to `--max-position`)
 
 **Example with 4 agents:**
 ```
-pattern: LONG  60%  →  long_weight += 0.60
+pattern: LONG  60%  →  long_weight += 0.60, long_count++
 macro:   NEUTRAL     →  (ignored)
-news:    LONG  55%  →  long_weight += 0.55
-flow:    SHORT 40%  →  short_weight += 0.40
+news:    LONG  55%  →  long_weight += 0.55, long_count++
+flow:    SHORT 40%  →  short_weight += 0.40, short_count++
 
 long_weight = 1.15, short_weight = 0.40
 Direction: LONG (1.15 > 0.40)
-Confidence: 1.15 / 4 = 29%
-→ Below 50% threshold, no trade
+Confidence: 1.15 / 2 = 57% (average of LONG signals only)
+→ Above 50% threshold, TRADE!
+```
+
+**Example with aligned signals:**
+```
+pattern: LONG  65%  →  long_weight += 0.65, long_count++
+macro:   NEUTRAL     →  (ignored)
+news:    LONG  55%  →  long_weight += 0.55, long_count++
+flow:    NEUTRAL     →  (ignored)
+
+long_weight = 1.20, long_count = 2
+Direction: LONG
+Confidence: 1.20 / 2 = 60%
+→ Above 50% threshold, TRADE!
 ```
 
 ### Position Sizing
@@ -264,7 +277,7 @@ Options:
   -i, --interval <SECS>      Analysis interval in seconds [default: 60]
       --paper                Paper trading (simulated with real prices)
       --live                 Live trading (real sats!)
-      --min-confidence <N>   Minimum confidence to act (0.0-1.0) [default: 0.7]
+      --min-confidence <N>   Minimum confidence to act (0.0-1.0) [default: 0.5]
       --max-position <SATS>  Maximum position size in sats [default: 100000]
 ```
 
