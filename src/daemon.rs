@@ -199,21 +199,19 @@ impl Daemon {
             Direction::Neutral => entry_price,
         };
 
-        let price_change_pct = if entry_price > 0.0 {
-            (exit_price - entry_price) / entry_price * 100.0
-        } else {
-            0.0
-        };
-
-        // For long: price up = profit. For short: price down = profit.
-        let pl_pct = match side {
-            Direction::Long => price_change_pct * leverage,
-            Direction::Short => -price_change_pct * leverage,
+        // LN Markets inverse perpetual P&L formula:
+        // P&L (sats) = Quantity × (1/exit_price - 1/entry_price) × 100_000_000
+        // For LONG: negate (profit when price goes UP)
+        // For SHORT: as-is (profit when price goes DOWN)
+        let inv_diff = (1.0 / exit_price) - (1.0 / entry_price);
+        let pl = match side {
+            Direction::Long => -quantity.abs() * inv_diff * 100_000_000.0,
+            Direction::Short => quantity.abs() * inv_diff * 100_000_000.0,
             Direction::Neutral => 0.0,
         };
 
-        // Estimate P&L in sats (margin * pl_pct / 100)
-        let pl = margin * pl_pct / 100.0;
+        // P&L percentage relative to margin
+        let pl_pct = if margin > 0.0 { (pl / margin) * 100.0 } else { 0.0 };
 
         Some(CrossPosition {
             side,
@@ -317,7 +315,7 @@ impl Daemon {
                     let side_icon = if pos.side == Direction::Long { "▲" } else { "▼" };
                     let pl_color = if pos.pl >= 0.0 { "\x1b[32m" } else { "\x1b[31m" };
                     println!(
-                        "  \x1b[36m[POSITION]\x1b[0m {} ${:.0} @ ${:.0} | P&L: {}${:.0} ({:+.2}%)\x1b[0m",
+                        "  \x1b[36m[POSITION]\x1b[0m {} ${:.0} @ ${:.0} | P&L: {}{:+.0} sats ({:+.2}%)\x1b[0m",
                         side_icon, pos.quantity, pos.entry_price, pl_color, pos.pl, pos.pl_pct
                     );
                 }
