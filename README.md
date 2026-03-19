@@ -38,6 +38,28 @@ Try these with your AI agent:
 
 Single binary, no runtime dependencies.
 
+### Download (recommended)
+
+Download the latest binary from [GitHub Releases](https://github.com/romainlnm/lnmarkets-cli/releases):
+
+```bash
+# macOS (Apple Silicon)
+curl -L https://github.com/romainlnm/lnmarkets-cli/releases/latest/download/lnmarkets-macos-arm64 -o lnmarkets
+
+# macOS (Intel)
+curl -L https://github.com/romainlnm/lnmarkets-cli/releases/latest/download/lnmarkets-macos-x64 -o lnmarkets
+
+# Linux (x64)
+curl -L https://github.com/romainlnm/lnmarkets-cli/releases/latest/download/lnmarkets-linux-x64 -o lnmarkets
+
+# Linux (ARM64)
+curl -L https://github.com/romainlnm/lnmarkets-cli/releases/latest/download/lnmarkets-linux-arm64 -o lnmarkets
+
+# Make executable and move to PATH
+chmod +x lnmarkets
+sudo mv lnmarkets /usr/local/bin/
+```
+
 ### Build from source
 
 Requires [Rust](https://rustup.rs/).
@@ -48,14 +70,7 @@ cd lnmarkets-cli
 cargo install --path . --locked
 ```
 
-Or build and copy manually:
-
-```bash
-cargo build --release
-cp ./target/release/lnmarkets ~/.cargo/bin/
-```
-
-Verify it works:
+### Verify installation
 
 ```bash
 lnmarkets market ticker
