@@ -191,7 +191,7 @@ lnmarkets daemon --agents pattern,macro,news,flow --interval 60
 | Agent | Data Source | Signals |
 |-------|-------------|---------|
 | `pattern` | Binance Spot API | RSI, EMA crossover, Bollinger Bands |
-| `macro` | TradingView API | Pre/post event warnings (FOMC, CPI, NFP) |
+| `macro` | TradingView API | Economic data surprises, event warnings |
 | `news` | RSS feeds | Sentiment analysis from crypto news |
 | `flow` | Binance Futures API | Order book imbalance, funding rate, OI, L/S ratio |
 
@@ -203,11 +203,26 @@ All data sources are **public APIs** — no API keys required.
 | Agent | Endpoint | Data |
 |-------|----------|------|
 | `pattern` | `api.binance.com/api/v3/klines` | BTC/USDT price candles |
-| `macro` | `economic-calendar.tradingview.com/events` | Economic calendar (14-day lookahead) |
+| `macro` | `economic-calendar.tradingview.com/events` | Economic releases with actual vs forecast |
 | `news` | CoinDesk, Cointelegraph, Bitcoin Magazine, Decrypt, CryptoSlate | RSS headlines |
 | `flow` | `fapi.binance.com/fapi/v1/depth`, `/fundingRate`, `/openInterest` | Futures market data |
 
 </details>
+
+### Macro Agent - Economic Data Analysis
+
+The macro agent analyzes recent economic releases (past 6 hours) and generates signals based on **surprise factor** (actual vs forecast):
+
+| Indicator | Beat Expectations | Miss Expectations |
+|-----------|-------------------|-------------------|
+| CPI/PPI/Inflation | SHORT (hawkish Fed) | LONG (dovish Fed) |
+| NFP/Jobs/Employment | SHORT (hawkish Fed) | LONG (dovish Fed) |
+| Unemployment | SHORT (lower = hawkish) | LONG (higher = dovish) |
+| Housing/Home Sales | SHORT (strong) | LONG (weak = dovish) |
+| GDP | SHORT (strong = hawkish) | LONG (weak = dovish) |
+| Retail Sales | SHORT (hawkish) | LONG (dovish) |
+
+**Example:** New Home Sales 587K vs 722K expected (-17.6% miss) → LONG signal (weak housing = dovish Fed = bullish BTC)
 
 ### Signal Aggregation
 

@@ -1,15 +1,10 @@
 //! Macro Agent - Economic Calendar Signals
 //!
 //! Fetches economic calendar from TradingView API.
-//! Tracks major economic events and produces signals:
-//! - Pre-event: reduce exposure before high-impact events
-//! - Post-event: volatility opportunities after releases
-//!
-//! Key events tracked:
-//! - FOMC (Federal Reserve decisions)
-//! - CPI/PPI (inflation data)
-//! - NFP (Non-Farm Payrolls)
-//! - GDP releases
+//! Analyzes recent economic data releases and upcoming events:
+//! - Surprise analysis: compares actual vs forecast values
+//! - Pre-event warnings: reduce exposure before high-impact events
+//! - BTC impact assessment based on Fed policy implications
 
 use super::{Agent, Direction, Signal};
 use anyhow::Result;
@@ -25,61 +20,23 @@ pub enum Importance {
     High = 3,
 }
 
-/// Economic event
-#[derive(Debug, Clone)]
-pub struct EconomicEvent {
-    pub name: String,
-    pub datetime: chrono::DateTime<Utc>,
-    pub importance: Importance,
-    pub country: String,
-}
-
-impl EconomicEvent {
-    pub fn new(name: &str, datetime: chrono::DateTime<Utc>, importance: Importance) -> Self {
-        Self {
-            name: name.to_string(),
-            datetime,
-            importance,
-            country: "US".to_string(),
-        }
-    }
-
-    /// Minutes until this event
-    pub fn minutes_until(&self) -> i64 {
-        let now = Utc::now();
-        (self.datetime - now).num_minutes()
-    }
-
-    /// Is this event imminent (within threshold)?
-    pub fn is_imminent(&self, minutes: i64) -> bool {
-        let mins = self.minutes_until();
-        mins > 0 && mins <= minutes
-    }
-
-    /// Has this event just passed (within threshold)?
-    pub fn just_passed(&self, minutes: i64) -> bool {
-        let mins = self.minutes_until();
-        mins < 0 && mins >= -minutes
-    }
-}
-
 /// Configuration for Macro Agent
 #[derive(Debug, Clone)]
 pub struct MacroConfig {
     /// Warning threshold in minutes before event
     pub pre_event_warning_mins: i64,
-    /// Post-event volatility window in minutes
-    pub post_event_window_mins: i64,
-    /// Only track high importance events
-    pub high_importance_only: bool,
+    /// Look back window for recent releases (hours)
+    pub lookback_hours: i64,
+    /// Minimum surprise percentage to generate signal
+    pub min_surprise_pct: f64,
 }
 
 impl Default for MacroConfig {
     fn default() -> Self {
         Self {
             pre_event_warning_mins: 60,
-            post_event_window_mins: 30,
-            high_importance_only: true,
+            lookback_hours: 6,
+            min_surprise_pct: 5.0,
         }
     }
 }
@@ -102,12 +59,8 @@ impl MacroAgent {
         Self::new(MacroConfig::default())
     }
 
-    /// Get upcoming economic events from TradingView API
-    async fn get_events(&self) -> Result<Vec<EconomicEvent>> {
-        let now = Utc::now();
-        let from = now.format("%Y-%m-%d").to_string();
-        let to = (now + chrono::Duration::days(14)).format("%Y-%m-%d").to_string();
-
+    /// Fetch events from TradingView API
+    async fn fetch_events(&self, from: &str, to: &str) -> Result<Vec<TradingViewEvent>> {
         let url = format!(
             "https://economic-calendar.tradingview.com/events?from={}&to={}&countries=US",
             from, to
@@ -127,104 +80,185 @@ impl MacroAgent {
         }
 
         let data: TradingViewResponse = response.json().await?;
-
-        let events: Vec<EconomicEvent> = data.result
-            .into_iter()
-            .filter(|e| {
-                // importance: 1 = high, 0 = medium, -1 = low
-                let dominated = e.importance >= 1;
-                !self.config.high_importance_only || dominated
-            })
-            .filter_map(|e| {
-                let datetime = chrono::DateTime::parse_from_rfc3339(&e.date).ok()?;
-                let importance = match e.importance {
-                    1.. => Importance::High,
-                    0 => Importance::Medium,
-                    _ => Importance::Low,
-                };
-                Some(EconomicEvent {
-                    name: e.title,
-                    datetime: datetime.with_timezone(&Utc),
-                    importance,
-                    country: "US".to_string(),
-                })
-            })
-            .collect();
-
-        Ok(events)
+        Ok(data.result.unwrap_or_default())
     }
 
-    /// Analyze events and produce signal
-    fn analyze_events(&self, events: &[EconomicEvent]) -> Signal {
+    /// Analyze recent releases for surprises
+    async fn analyze_recent_releases(&self) -> Option<(Direction, f64, String)> {
         let now = Utc::now();
+        let from = (now - chrono::Duration::hours(self.config.lookback_hours))
+            .format("%Y-%m-%d")
+            .to_string();
+        let to = now.format("%Y-%m-%d").to_string();
 
-        // Check for imminent high-impact events
+        let events = self.fetch_events(&from, &to).await.ok()?;
+
+        // Find significant surprises in recent releases
+        let mut best_surprise: Option<(Direction, f64, String)> = None;
+
         for event in events {
-            if event.importance == Importance::High {
-                let mins = event.minutes_until();
+            // Skip if no actual value or low importance
+            let actual = event.actual?;
+            let forecast = event.forecast?;
+            let importance = event.importance;
 
-                // Event very soon (< 15 min) - strong caution
-                if mins > 0 && mins <= 15 {
-                    return Signal::new(
-                        Direction::Neutral,
-                        0.9,
-                        "macro",
-                        &format!(
-                            "CAUTION: {} in {} min - reduce exposure",
-                            event.name, mins
-                        ),
-                    );
-                }
+            // Only consider medium+ importance
+            if importance < 0 {
+                continue;
+            }
 
-                // Event coming (15-60 min) - moderate caution
-                if mins > 15 && mins <= self.config.pre_event_warning_mins {
-                    return Signal::new(
-                        Direction::Neutral,
-                        0.7,
-                        "macro",
-                        &format!(
-                            "WARNING: {} in {} min - consider reducing positions",
-                            event.name, mins
-                        ),
-                    );
-                }
+            // Check if event was within lookback window
+            let event_time = chrono::DateTime::parse_from_rfc3339(&event.date).ok()?;
+            let mins_ago = (now - event_time.with_timezone(&Utc)).num_minutes();
+            if mins_ago < 0 || mins_ago > self.config.lookback_hours * 60 {
+                continue;
+            }
 
-                // Event just passed - volatility window
-                if event.just_passed(self.config.post_event_window_mins) {
-                    return Signal::new(
-                        Direction::Neutral,
-                        0.6,
-                        "macro",
-                        &format!(
-                            "POST-EVENT: {} released {} min ago - high volatility",
-                            event.name, -mins
-                        ),
+            // Calculate surprise percentage
+            let surprise_pct = if forecast != 0.0 {
+                ((actual - forecast) / forecast.abs()) * 100.0
+            } else {
+                continue;
+            };
+
+            // Skip small surprises
+            if surprise_pct.abs() < self.config.min_surprise_pct {
+                continue;
+            }
+
+            // Determine BTC impact based on event type and surprise direction
+            let (direction, confidence) = self.assess_btc_impact(&event.title, surprise_pct, importance);
+
+            // Keep the most significant surprise
+            if direction != Direction::Neutral {
+                let current_conf = best_surprise.as_ref().map(|(_, c, _)| *c).unwrap_or(0.0);
+                if confidence > current_conf {
+                    let reasoning = format!(
+                        "{}: {:.1} vs {:.1} exp ({:+.1}%) {}",
+                        event.title,
+                        actual,
+                        forecast,
+                        surprise_pct,
+                        if mins_ago < 60 {
+                            format!("{}m ago", mins_ago)
+                        } else {
+                            format!("{}h ago", mins_ago / 60)
+                        }
                     );
+                    best_surprise = Some((direction, confidence, reasoning));
                 }
             }
         }
 
-        // Find next event for status
-        let next_event = events.iter()
-            .filter(|e| e.minutes_until() > 0)
-            .min_by_key(|e| e.minutes_until());
+        best_surprise
+    }
 
-        let status = if let Some(event) = next_event {
-            let mins = event.minutes_until();
-            let hours = mins / 60;
-            let time_str = if hours > 24 {
-                format!("{}d", hours / 24)
-            } else if hours > 0 {
-                format!("{}h", hours)
-            } else {
-                format!("{}m", mins)
-            };
-            format!("Next: {} in {}", event.name, time_str)
-        } else {
-            "No major events in next 14 days".to_string()
+    /// Assess BTC impact based on economic indicator and surprise
+    fn assess_btc_impact(&self, title: &str, surprise_pct: f64, importance: i32) -> (Direction, f64) {
+        let title_lower = title.to_lowercase();
+
+        // Base confidence from importance
+        let base_conf = match importance {
+            1.. => 0.7,
+            0 => 0.55,
+            _ => 0.5,
         };
 
-        Signal::neutral("macro", &status)
+        // Scale confidence by surprise magnitude (cap at 2x)
+        let surprise_factor = (surprise_pct.abs() / 10.0).min(2.0);
+        let confidence = (base_conf + (surprise_factor * 0.15)).min(0.95);
+
+        // Determine direction based on indicator type
+        // For BTC: hawkish Fed = bearish, dovish Fed = bullish
+
+        // INFLATION indicators - higher = hawkish = bearish for BTC
+        if title_lower.contains("cpi") || title_lower.contains("ppi")
+            || title_lower.contains("inflation") || title_lower.contains("pce") {
+            return if surprise_pct > 0.0 {
+                (Direction::Short, confidence) // Higher inflation = bearish
+            } else {
+                (Direction::Long, confidence) // Lower inflation = bullish
+            };
+        }
+
+        // EMPLOYMENT indicators - stronger jobs = hawkish = bearish for BTC
+        if title_lower.contains("payroll") || title_lower.contains("nfp")
+            || title_lower.contains("employment") || title_lower.contains("jobs") {
+            return if surprise_pct > 0.0 {
+                (Direction::Short, confidence) // More jobs = bearish
+            } else {
+                (Direction::Long, confidence) // Fewer jobs = bullish
+            };
+        }
+
+        // UNEMPLOYMENT - lower = hawkish = bearish for BTC
+        if title_lower.contains("unemployment") || title_lower.contains("jobless") {
+            return if surprise_pct < 0.0 {
+                (Direction::Short, confidence) // Lower unemployment = bearish
+            } else {
+                (Direction::Long, confidence) // Higher unemployment = bullish
+            };
+        }
+
+        // HOUSING indicators - weaker = dovish = bullish for BTC
+        if title_lower.contains("home") || title_lower.contains("housing")
+            || title_lower.contains("building") || title_lower.contains("mortgage") {
+            return if surprise_pct < 0.0 {
+                (Direction::Long, confidence * 0.8) // Weak housing = bullish (dovish)
+            } else {
+                (Direction::Short, confidence * 0.8) // Strong housing = bearish
+            };
+        }
+
+        // GDP - weaker = dovish = bullish for BTC
+        if title_lower.contains("gdp") {
+            return if surprise_pct < 0.0 {
+                (Direction::Long, confidence * 0.9) // Weak GDP = bullish
+            } else {
+                (Direction::Short, confidence * 0.9) // Strong GDP = bearish
+            };
+        }
+
+        // RETAIL SALES - stronger = hawkish = bearish
+        if title_lower.contains("retail") {
+            return if surprise_pct > 0.0 {
+                (Direction::Short, confidence * 0.7)
+            } else {
+                (Direction::Long, confidence * 0.7)
+            };
+        }
+
+        // FED related - interpret based on title
+        if title_lower.contains("fed") || title_lower.contains("fomc") {
+            // Can't easily interpret from numbers, stay neutral
+            return (Direction::Neutral, 0.5);
+        }
+
+        // Default: no clear signal
+        (Direction::Neutral, 0.5)
+    }
+
+    /// Get upcoming high-impact events
+    async fn get_upcoming_events(&self) -> Result<Option<(String, i64)>> {
+        let now = Utc::now();
+        let from = now.format("%Y-%m-%d").to_string();
+        let to = (now + chrono::Duration::days(14)).format("%Y-%m-%d").to_string();
+
+        let events = self.fetch_events(&from, &to).await?;
+
+        // Find next high-importance event
+        for event in events {
+            if event.importance >= 1 {
+                if let Ok(event_time) = chrono::DateTime::parse_from_rfc3339(&event.date) {
+                    let mins = (event_time.with_timezone(&Utc) - now).num_minutes();
+                    if mins > 0 {
+                        return Ok(Some((event.title, mins)));
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 }
 
@@ -235,15 +269,54 @@ impl Agent for MacroAgent {
     }
 
     async fn analyze(&self) -> Result<Signal> {
-        let events = self.get_events().await?;
-        Ok(self.analyze_events(&events))
+        // First, check for recent surprises
+        if let Some((direction, confidence, reasoning)) = self.analyze_recent_releases().await {
+            return Ok(Signal::new(direction, confidence, "macro", &reasoning));
+        }
+
+        // Check for upcoming events
+        if let Ok(Some((event_name, mins))) = self.get_upcoming_events().await {
+            // Event very soon - strong caution
+            if mins <= 15 {
+                return Ok(Signal::new(
+                    Direction::Neutral,
+                    0.9,
+                    "macro",
+                    &format!("CAUTION: {} in {} min", event_name, mins),
+                ));
+            }
+
+            // Event coming soon
+            if mins <= self.config.pre_event_warning_mins {
+                return Ok(Signal::new(
+                    Direction::Neutral,
+                    0.7,
+                    "macro",
+                    &format!("WARNING: {} in {} min", event_name, mins),
+                ));
+            }
+
+            // Show next event
+            let time_str = if mins > 24 * 60 {
+                format!("{}d", mins / (24 * 60))
+            } else if mins > 60 {
+                format!("{}h", mins / 60)
+            } else {
+                format!("{}m", mins)
+            };
+
+            return Ok(Signal::neutral("macro", &format!("Next: {} in {}", event_name, time_str)));
+        }
+
+        Ok(Signal::neutral("macro", "No major events"))
     }
 }
 
 /// TradingView API response
 #[derive(Debug, Deserialize)]
 struct TradingViewResponse {
-    result: Vec<TradingViewEvent>,
+    #[serde(default)]
+    result: Option<Vec<TradingViewEvent>>,
 }
 
 /// TradingView event structure
@@ -252,6 +325,12 @@ struct TradingViewEvent {
     title: String,
     date: String,
     importance: i32,
+    #[serde(default)]
+    actual: Option<f64>,
+    #[serde(default)]
+    forecast: Option<f64>,
+    #[serde(default)]
+    previous: Option<f64>,
 }
 
 #[cfg(test)]
@@ -259,13 +338,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_event_imminent() {
-        let event = EconomicEvent::new(
-            "Test",
-            Utc::now() + chrono::Duration::minutes(30),
-            Importance::High,
-        );
-        assert!(event.is_imminent(60));
-        assert!(!event.is_imminent(15));
+    fn test_btc_impact_cpi() {
+        let agent = MacroAgent::with_defaults();
+
+        // Higher CPI = bearish
+        let (dir, _) = agent.assess_btc_impact("CPI m/m", 10.0, 1);
+        assert_eq!(dir, Direction::Short);
+
+        // Lower CPI = bullish
+        let (dir, _) = agent.assess_btc_impact("CPI m/m", -10.0, 1);
+        assert_eq!(dir, Direction::Long);
+    }
+
+    #[test]
+    fn test_btc_impact_housing() {
+        let agent = MacroAgent::with_defaults();
+
+        // Weak housing = bullish (dovish Fed)
+        let (dir, _) = agent.assess_btc_impact("New Home Sales", -20.0, 1);
+        assert_eq!(dir, Direction::Long);
     }
 }
