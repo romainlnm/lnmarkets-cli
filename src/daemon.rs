@@ -30,8 +30,10 @@ pub struct DaemonConfig {
     pub mode: TradingMode,
     /// Minimum confidence to act
     pub min_confidence: f64,
-    /// Maximum position size in sats
-    pub max_position_sats: u64,
+    /// Maximum position size in USD
+    pub max_position_usd: u64,
+    /// Leverage (1-100)
+    pub leverage: u32,
     /// Enabled agents
     pub agents: Vec<String>,
 }
@@ -42,7 +44,8 @@ impl Default for DaemonConfig {
             interval_secs: 60,
             mode: TradingMode::DryRun,
             min_confidence: 0.5,
-            max_position_sats: 100_000,
+            max_position_usd: 10,
+            leverage: 10,
             agents: vec!["pattern".to_string()],
         }
     }
@@ -142,7 +145,8 @@ impl Daemon {
         println!("  Mode: {}", mode_str);
         println!("  Interval: {}s", self.config.interval_secs);
         println!("  Min confidence: {:.0}%", self.config.min_confidence * 100.0);
-        println!("  Max position: {} sats", self.config.max_position_sats);
+        println!("  Max position: ${} USD", self.config.max_position_usd);
+        println!("  Leverage: {}x", self.config.leverage);
         println!("  Agents: {:?}", self.config.agents);
         println!();
 
@@ -352,14 +356,14 @@ impl Daemon {
             return None;
         }
 
-        // Calculate position size based on confidence
+        // Calculate position size based on confidence (in USD)
         let size_factor = (confidence - self.config.min_confidence) / (1.0 - self.config.min_confidence);
-        let position_sats = (self.config.max_position_sats as f64 * size_factor * 0.5) as u64;
+        let position_usd = ((self.config.max_position_usd as f64 * size_factor * 0.5) as u64).max(1);
 
         Some(TradeAction {
             direction,
             confidence,
-            position_sats,
+            position_usd,
             reasons: signals.iter().map(|s| s.reasoning.clone()).collect(),
         })
     }
@@ -373,15 +377,16 @@ impl Daemon {
         };
 
         println!(
-            "  \x1b[1m→ ACTION: {} {} sats ({:.0}% confidence)\x1b[0m",
+            "  \x1b[1m→ ACTION: {} ${} USD @ {}x ({:.0}% confidence)\x1b[0m",
             side.to_uppercase(),
-            action.position_sats,
+            action.position_usd,
+            self.config.leverage,
             action.confidence * 100.0
         );
 
         match self.config.mode {
             TradingMode::DryRun => {
-                println!("  [DRY RUN] Would execute: {} {} sats", side, action.position_sats);
+                println!("  [DRY RUN] Would execute: {} ${} @ {}x", side, action.position_usd, self.config.leverage);
             }
 
             TradingMode::Paper => {
@@ -394,6 +399,9 @@ impl Daemon {
                     }
                 };
 
+                // Convert USD position to sats for P&L tracking
+                let size_sats = ((action.position_usd as f64 / price) * 100_000_000.0) as u64;
+
                 // Record paper trade
                 let mut state = self.paper_state.write().await;
                 let trade_id = state.next_id;
@@ -402,7 +410,7 @@ impl Daemon {
                 let trade = PaperTrade {
                     id: trade_id,
                     direction: action.direction,
-                    size_sats: action.position_sats,
+                    size_sats,
                     entry_price: price,
                     entry_time: Utc::now(),
                     confidence: action.confidence,
@@ -413,10 +421,10 @@ impl Daemon {
                 };
 
                 println!(
-                    "  \x1b[36m[PAPER OPEN]\x1b[0m #{} {} {} sats @ ${:.0}",
+                    "  \x1b[36m[PAPER OPEN]\x1b[0m #{} {} ${} @ ${:.0}",
                     trade_id,
                     side.to_uppercase(),
-                    action.position_sats,
+                    action.position_usd,
                     price,
                 );
 
@@ -441,15 +449,29 @@ impl Daemon {
         }
     }
 
-    async fn place_order(&self, _client: &LnmClient, action: &TradeAction) -> Result<String> {
-        // TODO: Implement actual order placement using client
-        // For now, return a mock order ID
+    async fn place_order(&self, client: &LnmClient, action: &TradeAction) -> Result<String> {
+        use crate::models::futures::Trade;
+        use reqwest::Method;
+
         let side = match action.direction {
-            Direction::Long => "b",
-            Direction::Short => "s",
-            Direction::Neutral => "n",
+            Direction::Long => "buy",
+            Direction::Short => "sell",
+            Direction::Neutral => return Err(anyhow::anyhow!("Cannot place neutral order")),
         };
-        Ok(format!("mock-{}-{}", side, action.position_sats))
+
+        // Build request - quantity is in USD on LN Markets
+        let request = serde_json::json!({
+            "side": side,
+            "type": "market",
+            "quantity": action.position_usd,
+            "leverage": self.config.leverage
+        });
+
+        let trade: Trade = client
+            .request(Method::POST, "futures/isolated/trade", Some(&request))
+            .await?;
+
+        Ok(trade.id)
     }
 }
 
@@ -458,7 +480,7 @@ impl Daemon {
 struct TradeAction {
     direction: Direction,
     confidence: f64,
-    position_sats: u64,
+    position_usd: u64,
     #[allow(dead_code)]
     reasons: Vec<String>,
 }

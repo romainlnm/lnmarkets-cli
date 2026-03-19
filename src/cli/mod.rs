@@ -87,12 +87,16 @@ pub struct DaemonArgs {
     pub live: bool,
 
     /// Minimum confidence threshold (0.0-1.0)
-    #[arg(long, default_value = "0.7")]
+    #[arg(long, default_value = "0.5")]
     pub min_confidence: f64,
 
-    /// Maximum position size in sats
-    #[arg(long, default_value = "100000")]
+    /// Maximum position size in USD
+    #[arg(long, default_value = "10")]
     pub max_position: u64,
+
+    /// Leverage (1-100)
+    #[arg(long, default_value = "10")]
+    pub leverage: u32,
 
     /// Agents to enable (comma-separated: pattern,macro,news,flow)
     #[arg(short, long, value_delimiter = ',', default_value = "pattern")]

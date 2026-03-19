@@ -95,7 +95,8 @@ async fn run() -> Result<()> {
                 interval_secs: args.interval,
                 mode,
                 min_confidence: args.min_confidence,
-                max_position_sats: args.max_position,
+                max_position_usd: args.max_position,
+                leverage: args.leverage,
                 agents: args.agents.clone(),
             };
 
