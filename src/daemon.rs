@@ -450,28 +450,32 @@ impl Daemon {
     }
 
     async fn place_order(&self, client: &LnmClient, action: &TradeAction) -> Result<String> {
-        use crate::models::futures::Trade;
         use reqwest::Method;
 
         let side = match action.direction {
-            Direction::Long => "buy",
-            Direction::Short => "sell",
+            Direction::Long => "b",
+            Direction::Short => "s",
             Direction::Neutral => return Err(anyhow::anyhow!("Cannot place neutral order")),
         };
 
-        // Build request - quantity is in USD on LN Markets
+        // Cross margin order - quantity is in USD
         let request = serde_json::json!({
             "side": side,
-            "type": "market",
+            "type": "m",
             "quantity": action.position_usd,
             "leverage": self.config.leverage
         });
 
-        let trade: Trade = client
-            .request(Method::POST, "futures/isolated/trade", Some(&request))
+        let response: serde_json::Value = client
+            .request(Method::POST, "futures/cross/order", Some(&request))
             .await?;
 
-        Ok(trade.id)
+        // Extract order ID from response
+        let id = response["id"].as_str()
+            .or_else(|| response["orderId"].as_str())
+            .unwrap_or("unknown");
+
+        Ok(id.to_string())
     }
 }
 
