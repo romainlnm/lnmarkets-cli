@@ -162,17 +162,42 @@ async fn run() -> Result<()> {
             let mut sell_qty = 0.0;
             let mut total_fees = 0i64;
 
+            // Track weighted prices for P&L calculation
+            let mut buy_value = 0.0;  // sum of qty/price (BTC terms)
+            let mut sell_value = 0.0; // sum of qty/price (BTC terms)
+
             for order in &daemon_orders {
                 let qty = order["quantity"].as_f64().unwrap_or(0.0);
+                let price = order["price"].as_f64().unwrap_or(0.0);
                 let fee = order["tradingFee"].as_i64().unwrap_or(0);
                 total_fees += fee;
 
-                match order["side"].as_str() {
-                    Some("buy") => buy_qty += qty,
-                    Some("sell") => sell_qty += qty,
-                    _ => {}
+                if price > 0.0 {
+                    match order["side"].as_str() {
+                        Some("buy") => {
+                            buy_qty += qty;
+                            buy_value += qty / price;
+                        }
+                        Some("sell") => {
+                            sell_qty += qty;
+                            sell_value += qty / price;
+                        }
+                        _ => {}
+                    }
                 }
             }
+
+            // Calculate realized P&L for closed portion
+            // Inverse perpetual: P&L = (sell_value - buy_value) * 100_000_000
+            let closed_qty = buy_qty.min(sell_qty);
+            let realized_pl = if closed_qty > 0.0 {
+                // Scale to the closed portion
+                let buy_ratio = closed_qty / buy_qty.max(0.001);
+                let sell_ratio = closed_qty / sell_qty.max(0.001);
+                ((sell_value * sell_ratio) - (buy_value * buy_ratio)) * 100_000_000.0
+            } else {
+                0.0
+            } as i64;
 
             // Current position info
             let pos_qty = position["quantity"].as_f64().unwrap_or(0.0);
@@ -181,6 +206,11 @@ async fn run() -> Result<()> {
             let pos_pl = position["pl"].as_f64().unwrap_or(0.0);
             let pos_side = if pos_qty > 0.0 { "LONG" } else if pos_qty < 0.0 { "SHORT" } else { "FLAT" };
 
+            // Calculate total P&L (realized + unrealized)
+            let unrealized_pl = pos_pl as i64;
+            let total_pl = realized_pl + unrealized_pl;
+            let net_pl = total_pl - total_fees; // Net after fees
+
             // Print stats
             println!("\nDaemon Stats (cross margin)");
             println!("{}", "─".repeat(40));
@@ -188,16 +218,24 @@ async fn run() -> Result<()> {
             println!("Total bought:    ${:.0} USD", buy_qty);
             println!("Total sold:      ${:.0} USD", sell_qty);
             println!("Trading fees:    {} sats", total_fees);
-            println!();
 
+            // P&L section
+            let realized_color = if realized_pl >= 0 { "\x1b[32m" } else { "\x1b[31m" };
+            let net_color = if net_pl >= 0 { "\x1b[32m" } else { "\x1b[31m" };
+            println!();
+            println!("Realized P&L:    {}{:+} sats\x1b[0m", realized_color, realized_pl);
+            println!("Net P&L:         {}{:+} sats\x1b[0m (after fees)", net_color, net_pl);
+
+            // Position info
+            println!();
             if pos_qty.abs() > 0.0 {
                 let pl_color = if pos_pl >= 0.0 { "\x1b[32m" } else { "\x1b[31m" };
-                println!("Current Position:");
+                println!("Open Position:");
                 println!("  {} ${:.0} @ ${:.0}", pos_side, pos_qty.abs(), pos_entry);
                 println!("  Margin: {:.0} sats", pos_margin);
-                println!("  P&L:    {}{:+.0} sats\x1b[0m", pl_color, pos_pl);
+                println!("  Unrealized P&L: {}{:+.0} sats\x1b[0m", pl_color, pos_pl);
             } else {
-                println!("Current Position: FLAT (no open position)");
+                println!("Position: FLAT");
             }
 
             if args.trades {

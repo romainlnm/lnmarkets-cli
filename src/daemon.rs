@@ -224,18 +224,42 @@ impl Daemon {
         })
     }
 
-    /// Close cross margin position
+    /// Close cross margin position by placing opposite order
+    /// This ensures we get an order ID for stats tracking
     async fn close_cross_position(&self, reason: &str) -> Result<()> {
         use reqwest::Method;
 
         let client = self.client.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No client configured"))?;
 
-        let _resp: serde_json::Value = client
-            .request(Method::DELETE, "futures/cross/position", None::<&()>)
+        // Get current position to know size and direction
+        let position = self.get_cross_position().await
+            .ok_or_else(|| anyhow::anyhow!("No position to close"))?;
+
+        // Place opposite order to close
+        let close_side = match position.side {
+            Direction::Long => "s",   // Sell to close long
+            Direction::Short => "b",  // Buy to close short
+            Direction::Neutral => return Ok(()),
+        };
+
+        let request = serde_json::json!({
+            "side": close_side,
+            "type": "m",  // market order
+            "quantity": position.quantity as u64,
+        });
+
+        let response: serde_json::Value = client
+            .request(Method::POST, "futures/cross/order", Some(&request))
             .await?;
 
-        println!("  \x1b[33m[CLOSE]\x1b[0m Position closed: {}", reason);
+        // Save the closing order ID for stats
+        let order_id = response["id"].as_str().unwrap_or("unknown");
+        if let Err(e) = save_trade_id(order_id) {
+            eprintln!("  Warning: Could not save close order ID: {}", e);
+        }
+
+        println!("  \x1b[33m[CLOSE]\x1b[0m {} - Order: {}", reason, order_id);
         Ok(())
     }
 
