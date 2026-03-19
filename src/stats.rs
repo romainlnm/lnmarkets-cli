@@ -158,20 +158,21 @@ pub fn format_stats(stats: &TradingStats) -> String {
         "—".to_string()
     };
 
+    let reset = "\x1b[0m";
     let pnl_color = if stats.total_pnl_sats >= 0 { "\x1b[32m" } else { "\x1b[31m" };
 
     format!(
-        r#"
+"
 Trading Stats (daemon trades only)
 {}
 Trades:      {} total ({} open, {} closed)
 Win/Loss:    {} / {} ({:.1}%)
-Total P&L:   {}{:+} sats\x1b[0m
+Total P&L:   {}{:+} sats{}
 Best trade:  {:+} sats
 Worst trade: {:+} sats
 Avg P&L:     {:+.0} sats
 Streak:      {}
-"#,
+",
         "─".repeat(35),
         stats.total_trades,
         stats.open_trades,
@@ -181,6 +182,7 @@ Streak:      {}
         stats.win_rate,
         pnl_color,
         stats.total_pnl_sats,
+        reset,
         stats.best_trade_sats,
         stats.worst_trade_sats,
         stats.avg_pnl_sats,
