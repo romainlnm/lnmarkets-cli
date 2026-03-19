@@ -5,6 +5,7 @@ mod config;
 mod daemon;
 mod mcp;
 mod models;
+mod stats;
 
 use anyhow::Result;
 use clap::Parser;
@@ -112,6 +113,73 @@ async fn run() -> Result<()> {
 
             let daemon = Daemon::new(daemon_config, client);
             daemon.run().await?;
+        }
+
+        Commands::Stats(args) => {
+            use stats::{StatsDb, format_stats};
+
+            let db = StatsDb::open()?;
+
+            let mode = if args.live {
+                Some("live")
+            } else if args.paper {
+                Some("paper")
+            } else {
+                None // Show all
+            };
+
+            if args.trades {
+                // Show recent trades
+                let trades = db.get_recent_trades(args.limit, mode)?;
+                if trades.is_empty() {
+                    println!("No trades recorded yet.");
+                } else {
+                    println!("\nRecent Trades");
+                    println!("{}", "─".repeat(70));
+                    for trade in trades {
+                        let status = if trade.closed { "CLOSED" } else { "OPEN" };
+                        let pnl_str = trade.pnl_sats
+                            .map(|p| format!("{:+} sats", p))
+                            .unwrap_or_else(|| "—".to_string());
+                        let dir_icon = if trade.direction == "long" { "▲" } else { "▼" };
+                        println!(
+                            "  {} {} ${:.0} @ ${:.0} | {} | {} | {}",
+                            dir_icon,
+                            trade.direction.to_uppercase(),
+                            trade.quantity_usd,
+                            trade.entry_price,
+                            pnl_str,
+                            status,
+                            trade.mode.to_uppercase()
+                        );
+                    }
+                    println!();
+                }
+            } else {
+                // Show stats summary
+                if mode.is_none() {
+                    // Show both live and paper stats
+                    let live_stats = db.get_stats(Some("live"))?;
+                    let paper_stats = db.get_stats(Some("paper"))?;
+
+                    if live_stats.total_trades > 0 {
+                        println!("{}", format_stats(&live_stats, "live"));
+                    }
+                    if paper_stats.total_trades > 0 {
+                        println!("{}", format_stats(&paper_stats, "paper"));
+                    }
+                    if live_stats.total_trades == 0 && paper_stats.total_trades == 0 {
+                        println!("No trades recorded yet. Run the daemon to start trading!");
+                    }
+                } else {
+                    let stats = db.get_stats(mode)?;
+                    if stats.total_trades > 0 {
+                        println!("{}", format_stats(&stats, mode.unwrap()));
+                    } else {
+                        println!("No {} trades recorded yet.", mode.unwrap());
+                    }
+                }
+            }
         }
     }
 

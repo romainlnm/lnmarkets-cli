@@ -49,6 +49,9 @@ urlencoding = "2"
 # Agents
 async-trait = "0.1"
 
+# Database
+rusqlite = { version = "0.31", features = ["bundled"] }
+
 [dev-dependencies]
 tokio-test = "0.4"
 

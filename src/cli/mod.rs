@@ -69,6 +69,9 @@ pub enum Commands {
 
     /// Run trading daemon with automated agents
     Daemon(DaemonArgs),
+
+    /// Show trading statistics
+    Stats(StatsArgs),
 }
 
 /// Arguments for the daemon command
@@ -109,4 +112,24 @@ pub struct DaemonArgs {
     /// Agents to enable (comma-separated: pattern,macro,news,flow)
     #[arg(short, long, value_delimiter = ',', default_value = "pattern")]
     pub agents: Vec<String>,
+}
+
+/// Arguments for the stats command
+#[derive(clap::Args, Debug)]
+pub struct StatsArgs {
+    /// Show only live trading stats
+    #[arg(long)]
+    pub live: bool,
+
+    /// Show only paper trading stats
+    #[arg(long)]
+    pub paper: bool,
+
+    /// Show recent trades
+    #[arg(short, long)]
+    pub trades: bool,
+
+    /// Number of recent trades to show
+    #[arg(short, long, default_value = "10")]
+    pub limit: u32,
 }
