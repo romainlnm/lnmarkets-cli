@@ -209,6 +209,46 @@ All data sources are **public APIs** — no API keys required.
 
 </details>
 
+### Pattern Agent - Technical Analysis
+
+The pattern agent fetches 1-minute candles from Binance and calculates three indicators:
+
+| Indicator | Bullish Signal | Bearish Signal |
+|-----------|----------------|----------------|
+| RSI (14-period) | RSI < 30 (oversold) | RSI > 70 (overbought) |
+| EMA Crossover (9/21) | EMA9 > EMA21 | EMA9 < EMA21 |
+| Bollinger Bands (20, 2σ) | Price below lower band | Price above upper band |
+
+Signals are combined with weighted voting. Confidence scales with indicator agreement and RSI extremes.
+
+### Flow Agent - Order Flow Analysis
+
+The flow agent analyzes Binance Futures market data for institutional positioning:
+
+| Indicator | Bullish Signal | Bearish Signal |
+|-----------|----------------|----------------|
+| Order Book Imbalance | Bids > Asks (buying pressure) | Asks > Bids (selling pressure) |
+| Funding Rate | Negative (shorts pay longs) | Positive (longs pay shorts) |
+| Long/Short Ratio | Ratio < 0.8 (contrarian: crowded short) | Ratio > 1.5 (contrarian: crowded long) |
+
+**Contrarian logic:** Extreme positioning often precedes reversals. When everyone is long, the market tends to drop.
+
+### News Agent - Sentiment Analysis
+
+The news agent fetches RSS headlines from crypto news sources and performs keyword-based sentiment analysis:
+
+**Sources:** CoinDesk, Cointelegraph, Bitcoin Magazine, Decrypt, CryptoSlate
+
+| Bullish Keywords | Bearish Keywords |
+|------------------|------------------|
+| bull, surge, rally, soar, pump | bear, crash, dump, plunge, selloff |
+| breakout, ath, adoption, etf approved | hack, ban, fraud, investigation |
+| institutional, accumulation | liquidation, capitulation |
+
+- **Lookback:** 4 hours
+- **Cache:** 5 minutes (avoids rate limiting)
+- **Weighting:** Sources have credibility scores
+
 ### Macro Agent - Economic Data Analysis
 
 The macro agent analyzes recent economic releases (past 6 hours) and generates signals based on **surprise factor** (actual vs forecast):
