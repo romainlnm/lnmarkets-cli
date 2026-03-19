@@ -267,6 +267,20 @@ position_usd = max_position × size_factor × 0.5
 - **Cross margin:** All positions share the same margin pool
 - Higher confidence = larger position
 
+### Position Management
+
+The daemon automatically manages positions:
+
+**Take Profit / Stop Loss:**
+- Checks P&L every interval
+- Closes position when TP or SL threshold is hit
+- Default: +5% take profit, -3% stop loss
+
+**Signal Reversal:**
+- If holding LONG and agents signal SHORT → closes long, opens short
+- If holding SHORT and agents signal LONG → closes short, opens long
+- If signal matches current position → skips (won't pyramid)
+
 ### Options
 
 ```bash
@@ -277,9 +291,11 @@ Options:
   -i, --interval <SECS>      Analysis interval in seconds [default: 60]
       --paper                Paper trading (simulated with real prices)
       --live                 Live trading (real money!)
-      --min-confidence <N>   Minimum confidence to act (0.0-1.0) [default: 0.5]
+      --min-confidence <N>   Minimum confidence to act (0.0-1.0) [default: 0.7]
       --max-position <USD>   Maximum position size in USD [default: 10]
       --leverage <N>         Leverage (1-100) [default: 10]
+      --take-profit <PCT>    Take profit percentage [default: 5]
+      --stop-loss <PCT>      Stop loss percentage [default: 3]
 ```
 
 ### Examples
@@ -289,13 +305,16 @@ Options:
 lnmarkets daemon --agents pattern,flow --interval 30
 
 # Paper trading: test strategies with real prices
-lnmarkets daemon --paper --agents pattern,macro,news,flow --min-confidence 0.5
+lnmarkets daemon --paper --agents pattern,macro,news,flow --min-confidence 0.6
 
 # Live trading: $20 max position at 10x leverage
 lnmarkets daemon --live --agents pattern,flow --max-position 20 --leverage 10
 
+# Custom TP/SL: tighter stop loss, wider take profit
+lnmarkets daemon --live --agents pattern,macro,news,flow --take-profit 10 --stop-loss 2
+
 # Conservative: smaller positions, higher confidence required
-lnmarkets daemon --live --agents pattern,macro,news,flow --max-position 10 --leverage 5 --min-confidence 0.7
+lnmarkets daemon --live --agents pattern,macro,news,flow --max-position 10 --leverage 5 --min-confidence 0.8
 ```
 
 ### Sample Output
@@ -304,18 +323,23 @@ lnmarkets daemon --live --agents pattern,macro,news,flow --max-position 10 --lev
 Starting LN Markets trading daemon...
   Mode: LIVE TRADING
   Interval: 60s
-  Min confidence: 50%
+  Min confidence: 70%
   Max position: $20 USD
   Leverage: 10x
+  Take profit: +5.0%
+  Stop loss: -3.0%
   Agents: ["pattern", "flow", "news", "macro"]
 
-[13:54:10] Analyzing...
-  ▲ [pattern] LONG (30%): BTC $69876 | RSI: 77.9 | EMA9: 69813 EMA21: 69673 | RSI overbought
-  ▼ [flow] SHORT (83%): OB -83%↓ | FR -0.30bps | L/S 1.51 | OI +0.0% | ask imbalance, crowded long
-  ● [news] NEUTRAL (50%): 6 articles | 1B/4N/1b | [Cointelegraph] Bitcoin ETF...
-  ● [macro] NEUTRAL (50%): Next: JOLTs Job Openings in 12d
-  → ACTION: SELL $6 USD @ 10x (83% confidence)
-  [LIVE] Order placed: 3b67d720-01eb-4306-9722-65030cdd7a6f
+[14:30:00] Analyzing...
+  [POSITION] ▼ $10 @ $69500 | P&L: $2 (+4.50%)
+  ▲ [pattern] LONG (75%): BTC $69876 | RSI: 32.1 | EMA bullish crossover
+  ▼ [flow] SHORT (60%): OB -45%↓ | FR -0.30bps | L/S 1.51
+  ● [news] NEUTRAL (50%): 4 articles | 1B/2N/1b
+  ● [macro] NEUTRAL (50%): Next: CPI Release in 3d
+  → REVERSAL: SHORT → LONG (75% confidence)
+  [CLOSE] Position closed: Signal reversal
+  → ACTION: BUY $4 USD @ 10x (75% confidence)
+  [LIVE] Order placed: 5eeb79e3-88cc-4399-9b77-c61a8b507be0
 ```
 
 ## Commands

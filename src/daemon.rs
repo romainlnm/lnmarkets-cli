@@ -34,6 +34,10 @@ pub struct DaemonConfig {
     pub max_position_usd: u64,
     /// Leverage (1-100)
     pub leverage: u32,
+    /// Take profit percentage (e.g., 5.0 = 5%)
+    pub take_profit_pct: Option<f64>,
+    /// Stop loss percentage (e.g., 3.0 = 3%)
+    pub stop_loss_pct: Option<f64>,
     /// Enabled agents
     pub agents: Vec<String>,
 }
@@ -43,12 +47,25 @@ impl Default for DaemonConfig {
         Self {
             interval_secs: 60,
             mode: TradingMode::DryRun,
-            min_confidence: 0.5,
+            min_confidence: 0.7,
             max_position_usd: 10,
             leverage: 10,
+            take_profit_pct: Some(5.0),
+            stop_loss_pct: Some(3.0),
             agents: vec!["pattern".to_string()],
         }
     }
+}
+
+/// Cross margin position info
+#[derive(Debug, Clone)]
+struct CrossPosition {
+    side: Direction,
+    quantity: f64,
+    entry_price: f64,
+    margin: f64,
+    pl: f64,
+    pl_pct: f64,
 }
 
 /// Paper trade record
@@ -133,6 +150,89 @@ impl Daemon {
         Ok(price)
     }
 
+    /// Get current cross margin position
+    async fn get_cross_position(&self) -> Option<CrossPosition> {
+        use reqwest::Method;
+
+        let client = self.client.as_ref()?;
+        let resp: serde_json::Value = client
+            .request(Method::GET, "futures/cross/position", None::<&()>)
+            .await
+            .ok()?;
+
+        // Parse position - returns null or empty if no position
+        let quantity = resp["quantity"].as_f64().unwrap_or(0.0);
+        if quantity == 0.0 {
+            return None;
+        }
+
+        let side = if quantity > 0.0 { Direction::Long } else { Direction::Short };
+        let entry_price = resp["entryPrice"].as_f64().unwrap_or(0.0);
+        let margin = resp["margin"].as_f64().unwrap_or(0.0);
+        let pl = resp["pl"].as_f64().unwrap_or(0.0);
+        let pl_pct = if margin > 0.0 { (pl / margin) * 100.0 } else { 0.0 };
+
+        Some(CrossPosition {
+            side,
+            quantity: quantity.abs(),
+            entry_price,
+            margin,
+            pl,
+            pl_pct,
+        })
+    }
+
+    /// Close cross margin position
+    async fn close_cross_position(&self, reason: &str) -> Result<()> {
+        use reqwest::Method;
+
+        let client = self.client.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No client configured"))?;
+
+        let _resp: serde_json::Value = client
+            .request(Method::DELETE, "futures/cross/position", None::<&()>)
+            .await?;
+
+        println!("  \x1b[33m[CLOSE]\x1b[0m Position closed: {}", reason);
+        Ok(())
+    }
+
+    /// Check TP/SL and close if triggered
+    async fn check_tp_sl(&self) -> bool {
+        if self.config.mode != TradingMode::Live {
+            return false;
+        }
+
+        let position = match self.get_cross_position().await {
+            Some(p) => p,
+            None => return false,
+        };
+
+        // Check take profit
+        if let Some(tp_pct) = self.config.take_profit_pct {
+            if position.pl_pct >= tp_pct {
+                let _ = self.close_cross_position(&format!(
+                    "Take profit triggered ({:+.2}% >= +{:.1}%)",
+                    position.pl_pct, tp_pct
+                )).await;
+                return true;
+            }
+        }
+
+        // Check stop loss
+        if let Some(sl_pct) = self.config.stop_loss_pct {
+            if position.pl_pct <= -sl_pct {
+                let _ = self.close_cross_position(&format!(
+                    "Stop loss triggered ({:+.2}% <= -{:.1}%)",
+                    position.pl_pct, sl_pct
+                )).await;
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Run the daemon loop
     pub async fn run(&self) -> Result<()> {
         let mode_str = match self.config.mode {
@@ -147,6 +247,12 @@ impl Daemon {
         println!("  Min confidence: {:.0}%", self.config.min_confidence * 100.0);
         println!("  Max position: ${} USD", self.config.max_position_usd);
         println!("  Leverage: {}x", self.config.leverage);
+        if let Some(tp) = self.config.take_profit_pct {
+            println!("  Take profit: +{:.1}%", tp);
+        }
+        if let Some(sl) = self.config.stop_loss_pct {
+            println!("  Stop loss: -{:.1}%", sl);
+        }
         println!("  Agents: {:?}", self.config.agents);
         println!();
 
@@ -161,6 +267,24 @@ impl Daemon {
             ticker.tick().await;
 
             println!("[{}] Analyzing...", chrono::Utc::now().format("%H:%M:%S"));
+
+            // In live mode, show position and check TP/SL
+            if self.config.mode == TradingMode::Live {
+                if let Some(pos) = self.get_cross_position().await {
+                    let side_icon = if pos.side == Direction::Long { "▲" } else { "▼" };
+                    let pl_color = if pos.pl >= 0.0 { "\x1b[32m" } else { "\x1b[31m" };
+                    println!(
+                        "  \x1b[36m[POSITION]\x1b[0m {} ${:.0} @ ${:.0} | P&L: {}${:.0} ({:+.2}%)\x1b[0m",
+                        side_icon, pos.quantity, pos.entry_price, pl_color, pos.pl, pos.pl_pct
+                    );
+                }
+
+                // Check TP/SL
+                if self.check_tp_sl().await {
+                    println!();
+                    continue;
+                }
+            }
 
             // In paper mode, check and close open positions
             if self.config.mode == TradingMode::Paper {
@@ -189,9 +313,16 @@ impl Daemon {
                 );
             }
 
+            // Get current position for signal reversal check
+            let current_position = if self.config.mode == TradingMode::Live {
+                self.get_cross_position().await
+            } else {
+                None
+            };
+
             // Combine signals and decide
             if let Some(action) = self.decide(&signals) {
-                self.execute_action(action).await;
+                self.execute_action(action, current_position.as_ref()).await;
             }
 
             // Show paper trading stats
@@ -369,12 +500,34 @@ impl Daemon {
     }
 
     /// Execute a trading action
-    async fn execute_action(&self, action: TradeAction) {
+    async fn execute_action(&self, action: TradeAction, current_position: Option<&CrossPosition>) {
         let side = match action.direction {
             Direction::Long => "buy",
             Direction::Short => "sell",
             Direction::Neutral => return,
         };
+
+        // Check for signal reversal (position is opposite to new signal)
+        if let Some(pos) = current_position {
+            let is_reversal = (pos.side == Direction::Long && action.direction == Direction::Short)
+                || (pos.side == Direction::Short && action.direction == Direction::Long);
+
+            if is_reversal {
+                println!(
+                    "  \x1b[33m→ REVERSAL: {} → {} ({:.0}% confidence)\x1b[0m",
+                    pos.side, action.direction, action.confidence * 100.0
+                );
+                // Close current position first (cross margin will net out)
+                let _ = self.close_cross_position("Signal reversal").await;
+            } else if pos.side == action.direction {
+                // Same direction - skip to avoid adding to position
+                println!(
+                    "  → Already {} - skipping (P&L: {:+.2}%)",
+                    pos.side, pos.pl_pct
+                );
+                return;
+            }
+        }
 
         println!(
             "  \x1b[1m→ ACTION: {} ${} USD @ {}x ({:.0}% confidence)\x1b[0m",
@@ -453,15 +606,15 @@ impl Daemon {
         use reqwest::Method;
 
         let side = match action.direction {
-            Direction::Long => "b",
-            Direction::Short => "s",
+            Direction::Long => "buy",
+            Direction::Short => "sell",
             Direction::Neutral => return Err(anyhow::anyhow!("Cannot place neutral order")),
         };
 
         // Cross margin order - quantity is in USD
         let request = serde_json::json!({
             "side": side,
-            "type": "m",
+            "type": "market",
             "quantity": action.position_usd,
             "leverage": self.config.leverage
         });

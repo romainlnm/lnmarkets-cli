@@ -97,6 +97,8 @@ async fn run() -> Result<()> {
                 min_confidence: args.min_confidence,
                 max_position_usd: args.max_position,
                 leverage: args.leverage,
+                take_profit_pct: Some(args.take_profit),
+                stop_loss_pct: Some(args.stop_loss),
                 agents: args.agents.clone(),
             };
 

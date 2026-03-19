@@ -87,7 +87,7 @@ pub struct DaemonArgs {
     pub live: bool,
 
     /// Minimum confidence threshold (0.0-1.0)
-    #[arg(long, default_value = "0.5")]
+    #[arg(long, default_value = "0.7")]
     pub min_confidence: f64,
 
     /// Maximum position size in USD
@@ -97,6 +97,14 @@ pub struct DaemonArgs {
     /// Leverage (1-100)
     #[arg(long, default_value = "10")]
     pub leverage: u32,
+
+    /// Take profit percentage (e.g., 5 = close at +5%)
+    #[arg(long, default_value = "5")]
+    pub take_profit: f64,
+
+    /// Stop loss percentage (e.g., 3 = close at -3%)
+    #[arg(long, default_value = "3")]
+    pub stop_loss: f64,
 
     /// Agents to enable (comma-separated: pattern,macro,news,flow)
     #[arg(short, long, value_delimiter = ',', default_value = "pattern")]
