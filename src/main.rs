@@ -116,69 +116,94 @@ async fn run() -> Result<()> {
         }
 
         Commands::Stats(args) => {
-            use stats::{StatsDb, format_stats};
+            use stats::{load_trade_ids, calculate_stats, format_stats, TradeInfo};
+            use reqwest::Method;
 
-            let db = StatsDb::open()?;
+            // Load daemon trade IDs
+            let daemon_ids = load_trade_ids()?;
 
-            let mode = if args.live {
-                Some("live")
-            } else if args.paper {
-                Some("paper")
-            } else {
-                None // Show all
-            };
+            if daemon_ids.is_empty() {
+                println!("No daemon trades recorded yet. Run the daemon with --live to start trading!");
+                return Ok(());
+            }
+
+            // Fetch trades from API
+            let credentials = config.get_credentials();
+            let client = LnmClient::new(network, Some(credentials))?;
+
+            // Fetch closed trades
+            let closed: Vec<serde_json::Value> = client
+                .request(Method::GET, "futures/closed?limit=100", None::<&()>)
+                .await
+                .unwrap_or_default();
+
+            // Fetch running trades
+            let running: Vec<serde_json::Value> = client
+                .request(Method::GET, "futures/running", None::<&()>)
+                .await
+                .unwrap_or_default();
+
+            // Filter to daemon trades only and convert to TradeInfo
+            let mut trades: Vec<TradeInfo> = Vec::new();
+
+            for trade in closed.iter().chain(running.iter()) {
+                let id = trade["id"].as_str().unwrap_or_default().to_string();
+                if !daemon_ids.contains(&id) {
+                    continue;
+                }
+
+                let side = if trade["side"].as_str() == Some("b") { "long" } else { "short" };
+                let quantity = trade["quantity"].as_f64().unwrap_or(0.0);
+                let entry_price = trade["price"].as_f64().unwrap_or(0.0);
+                let exit_price = trade["exit_price"].as_f64();
+                let pl = trade["pl"].as_i64().unwrap_or(0);
+                let closed = trade["closed"].as_bool().unwrap_or(false);
+                let creation_ts = trade["creation_ts"].as_i64().unwrap_or(0);
+                let last_update_ts = trade["last_update_ts"].as_i64().unwrap_or(0);
+
+                trades.push(TradeInfo {
+                    id,
+                    side: side.to_string(),
+                    quantity,
+                    entry_price,
+                    exit_price,
+                    pl,
+                    closed,
+                    creation_ts,
+                    last_update_ts,
+                });
+            }
+
+            // Sort by creation time
+            trades.sort_by_key(|t| t.creation_ts);
 
             if args.trades {
                 // Show recent trades
-                let trades = db.get_recent_trades(args.limit, mode)?;
-                if trades.is_empty() {
-                    println!("No trades recorded yet.");
-                } else {
-                    println!("\nRecent Trades");
-                    println!("{}", "─".repeat(70));
-                    for trade in trades {
-                        let status = if trade.closed { "CLOSED" } else { "OPEN" };
-                        let pnl_str = trade.pnl_sats
-                            .map(|p| format!("{:+} sats", p))
-                            .unwrap_or_else(|| "—".to_string());
-                        let dir_icon = if trade.direction == "long" { "▲" } else { "▼" };
-                        println!(
-                            "  {} {} ${:.0} @ ${:.0} | {} | {} | {}",
-                            dir_icon,
-                            trade.direction.to_uppercase(),
-                            trade.quantity_usd,
-                            trade.entry_price,
-                            pnl_str,
-                            status,
-                            trade.mode.to_uppercase()
-                        );
-                    }
-                    println!();
+                println!("\nDaemon Trades ({} total)", trades.len());
+                println!("{}", "─".repeat(60));
+
+                let display_trades: Vec<_> = trades.iter().rev().take(args.limit as usize).collect();
+
+                for trade in display_trades {
+                    let status = if trade.closed { "CLOSED" } else { "OPEN" };
+                    let dir_icon = if trade.side == "long" { "▲" } else { "▼" };
+                    let pnl_color = if trade.pl >= 0 { "\x1b[32m" } else { "\x1b[31m" };
+                    println!(
+                        "  {} {} ${:.0} @ ${:.0} | {}{:+} sats\x1b[0m | {}",
+                        dir_icon,
+                        trade.side.to_uppercase(),
+                        trade.quantity,
+                        trade.entry_price,
+                        pnl_color,
+                        trade.pl,
+                        status,
+                    );
                 }
+                println!();
             } else {
                 // Show stats summary
-                if mode.is_none() {
-                    // Show both live and paper stats
-                    let live_stats = db.get_stats(Some("live"))?;
-                    let paper_stats = db.get_stats(Some("paper"))?;
-
-                    if live_stats.total_trades > 0 {
-                        println!("{}", format_stats(&live_stats, "live"));
-                    }
-                    if paper_stats.total_trades > 0 {
-                        println!("{}", format_stats(&paper_stats, "paper"));
-                    }
-                    if live_stats.total_trades == 0 && paper_stats.total_trades == 0 {
-                        println!("No trades recorded yet. Run the daemon to start trading!");
-                    }
-                } else {
-                    let stats = db.get_stats(mode)?;
-                    if stats.total_trades > 0 {
-                        println!("{}", format_stats(&stats, mode.unwrap()));
-                    } else {
-                        println!("No {} trades recorded yet.", mode.unwrap());
-                    }
-                }
+                let stats = calculate_stats(&trades);
+                println!("{}", format_stats(&stats));
             }
         }
     }

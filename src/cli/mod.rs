@@ -117,15 +117,7 @@ pub struct DaemonArgs {
 /// Arguments for the stats command
 #[derive(clap::Args, Debug)]
 pub struct StatsArgs {
-    /// Show only live trading stats
-    #[arg(long)]
-    pub live: bool,
-
-    /// Show only paper trading stats
-    #[arg(long)]
-    pub paper: bool,
-
-    /// Show recent trades
+    /// Show recent trades list
     #[arg(short, long)]
     pub trades: bool,
 

@@ -4,10 +4,9 @@
 
 use crate::agents::{pattern::PatternAgent, macro_cal::MacroAgent, news::NewsAgent, flow::FlowAgent, Agent, AgentRegistry, Direction, Signal};
 use crate::api::LnmClient;
-use crate::stats::StatsDb;
+use crate::stats::save_trade_id;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::interval;
@@ -100,7 +99,6 @@ pub struct Daemon {
     registry: AgentRegistry,
     client: Option<LnmClient>,
     paper_state: RwLock<PaperState>,
-    stats_db: Option<Mutex<StatsDb>>,
 }
 
 impl Daemon {
@@ -128,15 +126,6 @@ impl Daemon {
             }
         }
 
-        // Initialize stats database (optional, don't fail if it errors)
-        let stats_db = StatsDb::open()
-            .map(|db| Mutex::new(db))
-            .ok();
-
-        if stats_db.is_none() {
-            eprintln!("Warning: Could not open stats database, stats will not be recorded");
-        }
-
         Self {
             config,
             registry,
@@ -148,7 +137,6 @@ impl Daemon {
                 wins: 0,
                 losses: 0,
             }),
-            stats_db,
         }
     }
 
@@ -243,28 +231,11 @@ impl Daemon {
         let client = self.client.as_ref()
             .ok_or_else(|| anyhow::anyhow!("No client configured"))?;
 
-        // Get exit price before closing
-        let exit_price = self.get_current_price().await.unwrap_or(0.0);
-
         let _resp: serde_json::Value = client
             .request(Method::DELETE, "futures/cross/position", None::<&()>)
             .await?;
 
         println!("  \x1b[33m[CLOSE]\x1b[0m Position closed: {}", reason);
-
-        // Close open trades in stats database
-        let mode = match self.config.mode {
-            TradingMode::Live => "live",
-            TradingMode::Paper => "paper",
-            TradingMode::DryRun => return Ok(()),
-        };
-
-        if let Some(db) = &self.stats_db {
-            if let Ok(db) = db.lock() {
-                let _ = db.close_all_open(exit_price, mode);
-            }
-        }
-
         Ok(())
     }
 
@@ -653,34 +624,18 @@ impl Daemon {
                 );
 
                 state.trades.push(trade);
-
-                // Record in stats database
-                if let Some(db) = &self.stats_db {
-                    if let Ok(db) = db.lock() {
-                        let dir = if action.direction == Direction::Long { "long" } else { "short" };
-                        let agents = action.reasons.join("; ");
-                        let _ = db.record_open(dir, action.position_usd as f64, price, action.confidence, &agents, "paper");
-                    }
-                }
             }
 
             TradingMode::Live => {
                 // Execute actual trade
                 if let Some(client) = &self.client {
-                    // Get entry price before placing order
-                    let entry_price = self.get_current_price().await.unwrap_or(0.0);
-
                     match self.place_order(client, &action).await {
                         Ok(order_id) => {
                             println!("  \x1b[32m[LIVE] Order placed: {}\x1b[0m", order_id);
 
-                            // Record in stats database
-                            if let Some(db) = &self.stats_db {
-                                if let Ok(db) = db.lock() {
-                                    let dir = if action.direction == Direction::Long { "long" } else { "short" };
-                                    let agents = action.reasons.join("; ");
-                                    let _ = db.record_open(dir, action.position_usd as f64, entry_price, action.confidence, &agents, "live");
-                                }
+                            // Save trade ID for stats tracking
+                            if let Err(e) = save_trade_id(&order_id) {
+                                eprintln!("  Warning: Could not save trade ID: {}", e);
                             }
                         }
                         Err(e) => {

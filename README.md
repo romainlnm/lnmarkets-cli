@@ -400,12 +400,10 @@ Starting LN Markets trading daemon...
 
 ## Stats Dashboard
 
-Track your trading performance with persistent statistics.
+Track your daemon trading performance. Stats are fetched from the LN Markets API, filtered to trades opened by the daemon.
 
 ```bash
-lnmarkets stats              # Show all stats
-lnmarkets stats --live       # Live trading only
-lnmarkets stats --paper      # Paper trading only
+lnmarkets stats              # Show stats summary
 lnmarkets stats --trades     # List recent trades
 lnmarkets stats --trades -l 20  # Last 20 trades
 ```
@@ -413,28 +411,23 @@ lnmarkets stats --trades -l 20  # Last 20 trades
 ### Sample Output
 
 ```
-LIVE Trading Stats
-──────────────────────────────
-Trades:      47 total (1 open)
+Trading Stats (daemon trades only)
+───────────────────────────────────
+Trades:      47 total (1 open, 46 closed)
 Win/Loss:    32 / 14 (69.6%)
 Total P&L:   +12,450 sats
 Best trade:  +2,100 sats
 Worst trade: -890 sats
 Avg P&L:     +270 sats
 Streak:      3W 🔥
-Avg hold:    23 min
 ```
 
-### What's Tracked
+### How It Works
 
-- Win/loss ratio and win rate
-- Total P&L in sats
-- Best and worst trades
-- Current win/loss streak
-- Average hold time
-- Confidence and agents used per trade
-
-Data stored locally in `~/.config/lnmarkets/stats.db` (SQLite).
+- Daemon saves trade IDs to `~/.config/lnmarkets/daemon_trades.txt`
+- Stats command fetches trade data from LN Markets API
+- Filters to daemon trades only (excludes manual trades)
+- P&L always up-to-date from the API
 
 ## Commands
 
