@@ -89,7 +89,10 @@ impl MacroAgent {
         let from = (now - chrono::Duration::hours(self.config.lookback_hours))
             .format("%Y-%m-%d")
             .to_string();
-        let to = now.format("%Y-%m-%d").to_string();
+        // API returns 0 events when from == to, so add 1 day
+        let to = (now + chrono::Duration::days(1))
+            .format("%Y-%m-%d")
+            .to_string();
 
         let events = self.fetch_events(&from, &to).await.ok()?;
 
