@@ -211,8 +211,16 @@ impl Daemon {
             Direction::Neutral => 0.0,
         };
 
-        // P&L percentage relative to margin
-        let pl_pct = if margin > 0.0 { (pl / margin) * 100.0 } else { 0.0 };
+        // Calculate position-specific margin (not total account margin)
+        // For inverse perpetual: margin = (quantity / leverage) / price * 100_000_000 sats
+        let position_margin = if entry_price > 0.0 && leverage > 0.0 {
+            (quantity.abs() / leverage) / entry_price * 100_000_000.0
+        } else {
+            margin // fallback to account margin
+        };
+
+        // P&L percentage relative to position margin (not account margin)
+        let pl_pct = if position_margin > 0.0 { (pl / position_margin) * 100.0 } else { 0.0 };
 
         Some(CrossPosition {
             side,
@@ -238,14 +246,14 @@ impl Daemon {
 
         // Place opposite order to close
         let close_side = match position.side {
-            Direction::Long => "s",   // Sell to close long
-            Direction::Short => "b",  // Buy to close short
+            Direction::Long => "sell",   // Sell to close long
+            Direction::Short => "buy",   // Buy to close short
             Direction::Neutral => return Ok(()),
         };
 
         let request = serde_json::json!({
             "side": close_side,
-            "type": "m",  // market order
+            "type": "market",
             "quantity": position.quantity as u64,
         });
 
@@ -277,22 +285,28 @@ impl Daemon {
         // Check take profit
         if let Some(tp_pct) = self.config.take_profit_pct {
             if position.pl_pct >= tp_pct {
-                let _ = self.close_cross_position(&format!(
+                let reason = format!(
                     "Take profit triggered ({:+.2}% >= +{:.1}%)",
                     position.pl_pct, tp_pct
-                )).await;
-                return true;
+                );
+                match self.close_cross_position(&reason).await {
+                    Ok(_) => return true,
+                    Err(e) => eprintln!("  \x1b[31m[ERROR]\x1b[0m Failed to close: {}", e),
+                }
             }
         }
 
         // Check stop loss
         if let Some(sl_pct) = self.config.stop_loss_pct {
             if position.pl_pct <= -sl_pct {
-                let _ = self.close_cross_position(&format!(
+                let reason = format!(
                     "Stop loss triggered ({:+.2}% <= -{:.1}%)",
                     position.pl_pct, sl_pct
-                )).await;
-                return true;
+                );
+                match self.close_cross_position(&reason).await {
+                    Ok(_) => return true,
+                    Err(e) => eprintln!("  \x1b[31m[ERROR]\x1b[0m Failed to close: {}", e),
+                }
             }
         }
 
