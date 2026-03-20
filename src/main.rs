@@ -143,12 +143,6 @@ async fn run() -> Result<()> {
                 .cloned()
                 .unwrap_or_default();
 
-            // Fetch current cross position
-            let position: serde_json::Value = client
-                .request(Method::GET, "futures/cross/position", None::<&serde_json::Value>)
-                .await
-                .unwrap_or_default();
-
             // Filter to daemon orders only
             let daemon_orders: Vec<_> = cross_orders.iter()
                 .filter(|o| {
@@ -163,9 +157,9 @@ async fn run() -> Result<()> {
             let mut sell_qty = 0.0;
             let mut total_fees = 0i64;
 
-            // Track weighted prices for P&L calculation
-            let mut buy_value = 0.0;  // sum of qty/price (BTC terms)
-            let mut sell_value = 0.0; // sum of qty/price (BTC terms)
+            // Track weighted prices for P&L calculation (BTC terms for inverse perp)
+            let mut buy_value = 0.0;  // sum of qty/price (BTC received when closing shorts)
+            let mut sell_value = 0.0; // sum of qty/price (BTC received when opening shorts)
 
             for order in &daemon_orders {
                 let qty = order["quantity"].as_f64().unwrap_or(0.0);
@@ -188,11 +182,10 @@ async fn run() -> Result<()> {
                 }
             }
 
-            // Calculate realized P&L for closed portion
+            // Calculate realized P&L for closed portion (matched buy/sell pairs)
             // Inverse perpetual: P&L = (sell_value - buy_value) * 100_000_000
             let closed_qty = buy_qty.min(sell_qty);
             let realized_pl = if closed_qty > 0.0 {
-                // Scale to the closed portion
                 let buy_ratio = closed_qty / buy_qty.max(0.001);
                 let sell_ratio = closed_qty / sell_qty.max(0.001);
                 ((sell_value * sell_ratio) - (buy_value * buy_ratio)) * 100_000_000.0
@@ -200,49 +193,22 @@ async fn run() -> Result<()> {
                 0.0
             } as i64;
 
-            // Current position info
-            let pos_qty = position["quantity"].as_f64().unwrap_or(0.0);
-            let pos_entry = position["entryPrice"].as_f64().unwrap_or(0.0);
-            let pos_margin = position["margin"]
-                .as_f64()
-                .or_else(|| position["margin"].as_i64().map(|i| i as f64))
-                .unwrap_or(0.0);
-            let pos_pl = position["pl"]
-                .as_f64()
-                .or_else(|| position["pl"].as_i64().map(|i| i as f64))
-                .unwrap_or(0.0);
-            let pos_side = if pos_qty > 0.0 { "LONG" } else if pos_qty < 0.0 { "SHORT" } else { "FLAT" };
-
-            // Calculate total P&L (realized + unrealized)
-            let unrealized_pl = pos_pl as i64;
-            let total_pl = realized_pl + unrealized_pl;
-            let net_pl = total_pl - total_fees; // Net after fees
+            // Calculate realized P&L (net after fees)
+            let net_realized = realized_pl - total_fees;
 
             // Print stats
-            println!("\nDaemon Stats (cross margin)");
+            println!("\nDaemon Stats");
             println!("{}", "─".repeat(40));
             println!("Orders placed:   {}", total_orders);
             println!("Total bought:    ${:.0} USD", buy_qty);
             println!("Total sold:      ${:.0} USD", sell_qty);
             println!("Trading fees:    {} sats", total_fees);
 
-            // P&L section
-            let realized_color = if realized_pl >= 0 { "\x1b[32m" } else { "\x1b[31m" };
-            let net_color = if net_pl >= 0 { "\x1b[32m" } else { "\x1b[31m" };
-            println!();
-            println!("Realized P&L:    {}{:+} sats\x1b[0m", realized_color, realized_pl);
-            println!("Net P&L:         {}{:+} sats\x1b[0m (after fees)", net_color, net_pl);
-
-            // Position info
-            println!();
-            if pos_qty.abs() > 0.0 {
-                let pl_color = if pos_pl >= 0.0 { "\x1b[32m" } else { "\x1b[31m" };
-                println!("Open Position:");
-                println!("  {} ${:.0} @ ${:.0}", pos_side, pos_qty.abs(), pos_entry);
-                println!("  Margin: {:.0} sats", pos_margin);
-                println!("  Unrealized P&L: {}{:+.0} sats\x1b[0m", pl_color, pos_pl);
-            } else {
-                println!("Position: FLAT");
+            // P&L section (realized only - unrealized requires checking GUI)
+            if realized_pl != 0 || total_fees > 0 {
+                let realized_color = if net_realized >= 0 { "\x1b[32m" } else { "\x1b[31m" };
+                println!();
+                println!("Realized P&L:    {}{:+} sats\x1b[0m (after fees)", realized_color, net_realized);
             }
 
             if args.trades {
