@@ -203,8 +203,14 @@ async fn run() -> Result<()> {
             // Current position info
             let pos_qty = position["quantity"].as_f64().unwrap_or(0.0);
             let pos_entry = position["entryPrice"].as_f64().unwrap_or(0.0);
-            let pos_margin = position["margin"].as_f64().unwrap_or(0.0);
-            let pos_pl = position["pl"].as_f64().unwrap_or(0.0);
+            let pos_margin = position["margin"]
+                .as_f64()
+                .or_else(|| position["margin"].as_i64().map(|i| i as f64))
+                .unwrap_or(0.0);
+            let pos_pl = position["pl"]
+                .as_f64()
+                .or_else(|| position["pl"].as_i64().map(|i| i as f64))
+                .unwrap_or(0.0);
             let pos_side = if pos_qty > 0.0 { "LONG" } else if pos_qty < 0.0 { "SHORT" } else { "FLAT" };
 
             // Calculate total P&L (realized + unrealized)
