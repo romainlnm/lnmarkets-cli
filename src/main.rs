@@ -202,13 +202,11 @@ async fn run() -> Result<()> {
             println!("Orders placed:   {}", total_orders);
             println!("Total bought:    ${:.0} USD", buy_qty);
             println!("Total sold:      ${:.0} USD", sell_qty);
-            println!("Trading fees:    {} sats", total_fees);
 
             // P&L section (realized only - unrealized requires checking GUI)
             if realized_pl != 0 || total_fees > 0 {
                 let realized_color = if net_realized >= 0 { "\x1b[32m" } else { "\x1b[31m" };
-                println!();
-                println!("Realized P&L:    {}{:+} sats\x1b[0m (after fees)", realized_color, net_realized);
+                println!("Realized Net P&L: {}{:+} sats\x1b[0m", realized_color, net_realized);
             }
 
             if args.trades {
