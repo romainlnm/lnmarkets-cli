@@ -1,10 +1,11 @@
-pub mod market;
-pub mod futures;
 pub mod account;
-pub mod funding;
 pub mod auth;
-pub mod output;
+pub mod funding;
+pub mod futures;
+pub mod market;
 pub mod mcp;
+pub mod output;
+pub mod recap;
 
 use clap::{Parser, Subcommand};
 use crate::config::{Network, OutputFormat};
@@ -72,6 +73,9 @@ pub enum Commands {
 
     /// Show trading statistics
     Stats(StatsArgs),
+
+    /// BTC market recap (24-48h overview)
+    Recap(recap::RecapArgs),
 }
 
 /// Arguments for the daemon command

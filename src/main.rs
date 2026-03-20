@@ -5,6 +5,7 @@ mod config;
 mod daemon;
 mod mcp;
 mod models;
+mod recap;
 mod stats;
 
 use anyhow::Result;
@@ -265,6 +266,10 @@ async fn run() -> Result<()> {
                 }
             }
             println!();
+        }
+
+        Commands::Recap(args) => {
+            args.execute(format).await?;
         }
     }
 

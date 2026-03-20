@@ -30,6 +30,7 @@ Try these with your AI agent:
 - [MCP Server](#mcp-server)
 - [Trading Daemon](#trading-daemon)
 - [Stats Dashboard](#stats-dashboard)
+- [Market Recap](#market-recap)
 - [Commands](#commands)
 - [API Keys & Configuration](#api-keys--configuration)
 - [License](#license)
@@ -456,9 +457,59 @@ Daemon Orders (3 total)
 - Shows current cross position with unrealized P&L
 - Cross margin aggregates all orders into a single position
 
+## Market Recap
+
+Get a 24-48h BTC derivatives market overview. Aggregates data from multiple free APIs — no authentication required.
+
+```bash
+lnmarkets recap              # Table output
+lnmarkets recap -o json      # JSON output
+```
+
+### Sample Output
+
+```
+BTC Market Recap (24h)
+══════════════════════════════════════════════════
+
+Price Action
+  Current:    $69,250
+  24h High:   $70,100 (+1.2%)
+  24h Low:    $68,200 (-1.5%)
+  24h Change: +2.3%
+
+Derivatives
+  Funding Rate:  +0.0045% (neutral)
+  Open Interest: $18.2B
+  Long/Short:    1.23 (longs dominant)
+
+Sentiment
+  Fear & Greed:  72 (Greed) ^ from 65
+
+Recent Events (24h)
+  v CPI m/m: 3.2% vs 3.4% exp (-5.9%) - BULLISH
+
+Upcoming Events (48h)
+  -> [!] FOMC Minutes (high) in 18h
+  -> [!] NFP (high) in 42h
+```
+
+### Data Sources
+
+| Data | Source | Endpoint |
+|------|--------|----------|
+| Price action | Binance Spot | `/api/v3/klines` |
+| Funding rate | Binance Futures | `/fapi/v1/fundingRate` |
+| Open interest | Binance Futures | `/fapi/v1/openInterest` |
+| Long/Short ratio | Binance Futures | `/futures/data/globalLongShortAccountRatio` |
+| Fear & Greed | Alternative.me | `api.alternative.me/fng` |
+| Economic calendar | TradingView | `economic-calendar.tradingview.com/events` |
+
+All sources are public APIs with no authentication required. Failed sources are shown as warnings — partial data is still displayed.
+
 ## Commands
 
-10 MCP tools across 4 service groups. 28 CLI commands across 7 groups.
+10 MCP tools across 4 service groups. 29 CLI commands across 8 groups.
 
 | Group | CLI Commands | MCP Tools | Auth | Description |
 |-------|--------------|-----------|------|-------------|
@@ -469,6 +520,7 @@ Daemon Orders (3 total)
 | auth | 4 | — | No | Login, logout, status |
 | daemon | 1 | — | Optional | Automated trading with agents |
 | stats | 1 | — | No | Trading performance dashboard |
+| recap | 1 | — | No | 24-48h BTC market overview |
 
 7 tools are marked `dangerous` (orders, deposits, withdrawals).
 
@@ -529,6 +581,12 @@ Daemon Orders (3 total)
 | `lnmarkets auth logout` | Remove stored credentials |
 | `lnmarkets auth status` | Check authentication status |
 | `lnmarkets auth whoami` | Show credential file location |
+
+### Recap (Public)
+
+| Command | Description |
+|---------|-------------|
+| `lnmarkets recap` | 24-48h BTC market overview (price, derivatives, sentiment, calendar) |
 
 </details>
 
