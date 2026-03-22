@@ -1,3 +1,4 @@
+mod tui;
 mod agents;
 mod api;
 mod cli;
@@ -115,6 +116,31 @@ async fn run() -> Result<()> {
             let daemon = Daemon::new(daemon_config, client);
             daemon.run().await?;
         }
+
+        Commands::Tui(args) => {
+            let client = if config.has_credentials() {
+                let credentials = config.get_credentials();
+                LnmClient::new(network, Some(credentials)).ok()
+            } else {
+                None
+            };
+            tui::run(args.refresh, client).await?;
+        }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         Commands::Stats(args) => {
             use stats::load_trade_ids;

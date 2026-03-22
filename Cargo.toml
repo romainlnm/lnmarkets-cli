@@ -49,6 +49,10 @@ urlencoding = "2"
 # Agents
 async-trait = "0.1"
 
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
 [dev-dependencies]
 tokio-test = "0.4"
 
