@@ -1,7 +1,7 @@
 use super::popup::{Notification, Popup};
 use crate::api::LnmClient;
 use crate::models::funding::{Deposit, Withdrawal};
-use crate::models::futures::Trade;
+use crate::models::futures::{MarginType, Trade};
 use crate::models::market::Ticker;
 use crate::models::user::User;
 use crate::recap::MarketRecap;
@@ -406,6 +406,8 @@ impl App {
             if let Ok(u) = c.request::<User, ()>(Method::GET, "account", None).await {
                 self.user = Some(u);
             }
+            // Fetch isolated positions
+            let mut positions = Vec::new();
             if let Ok(t) = c
                 .request::<Vec<Trade>, ()>(
                     Method::GET,
@@ -414,8 +416,46 @@ impl App {
                 )
                 .await
             {
-                self.positions = t;
+                positions.extend(t);
             }
+            // Fetch cross margin position
+            if let Ok(cross) = c
+                .request::<serde_json::Value, ()>(Method::GET, "futures/cross/position", None)
+                .await
+            {
+                let quantity = cross["quantity"].as_f64().unwrap_or(0.0);
+                if quantity != 0.0 {
+                    let side = if quantity > 0.0 { "buy" } else { "sell" };
+                    let entry_price = cross["entryPrice"].as_f64();
+                    let margin = cross["margin"].as_i64();
+                    let leverage = cross["leverage"].as_f64().unwrap_or(1.0);
+                    let pl = cross["pl"].as_i64();
+                    let cross_trade = Trade {
+                        id: "cross".to_string(),
+                        user_id: None,
+                        side: side.to_string(),
+                        order_type: "market".to_string(),
+                        quantity: quantity.abs() as i64,
+                        leverage,
+                        stop_loss: cross["stoploss"].as_f64(),
+                        take_profit: cross["takeprofit"].as_f64(),
+                        price: entry_price,
+                        entry_price,
+                        exit_price: None,
+                        margin,
+                        margin_with_cf: None,
+                        pl,
+                        liquidation_price: cross["liquidationPrice"].as_f64(),
+                        created_at: None,
+                        open_at: None,
+                        closed_at: None,
+                        last_update: None,
+                        margin_type: MarginType::Cross,
+                    };
+                    positions.insert(0, cross_trade); // Cross position first
+                }
+            }
+            self.positions = positions;
             if let Ok(t) = c
                 .request::<Vec<Trade>, ()>(
                     Method::GET,

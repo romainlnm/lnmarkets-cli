@@ -1017,12 +1017,18 @@ fn trow(a: &App, t: &crate::models::futures::Trade) -> Row<'static> {
                 .unwrap_or("—".into()),
         ),
         Cell::from(Span::styled(
-            if t.id.len() > 8 {
+            if t.margin_type == crate::models::futures::MarginType::Cross {
+                "CROSS".to_string()
+            } else if t.id.len() > 8 {
                 t.id[..8].to_string()
             } else {
                 t.id.clone()
             },
-            Style::default().fg(dm(a)),
+            Style::default().fg(if t.margin_type == crate::models::futures::MarginType::Cross {
+                pu(a)
+            } else {
+                dm(a)
+            }),
         )),
     ])
 }

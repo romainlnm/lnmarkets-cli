@@ -45,6 +45,14 @@ pub enum TradeStatus {
     Canceled,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MarginType {
+    #[default]
+    Isolated,
+    Cross,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trade {
     pub id: String,
@@ -78,6 +86,8 @@ pub struct Trade {
     pub closed_at: Option<String>,
     #[serde(rename = "lastUpdate")]
     pub last_update: Option<String>,
+    #[serde(default)]
+    pub margin_type: MarginType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
