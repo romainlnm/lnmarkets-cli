@@ -52,6 +52,7 @@ async-trait = "0.1"
 # TUI
 ratatui = "0.29"
 crossterm = "0.28"
+qrcode = "0.14"
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -921,6 +921,21 @@ fn pdraw(f: &mut Frame, a: &App, p: &Popup, ar: Rect) {
                 }
             }
         }
+        Popup::QrCode { title, invoice: _, amount, qr_lines } => {
+            let h = (qr_lines.len() as u16 + 6).min(ar.height - 2);
+            let w = qr_lines.first().map(|l| l.chars().count()).unwrap_or(40) as u16 + 6;
+            let r = cr(w.min(ar.width - 2), h, ar); f.render_widget(Clear, r);
+            f.render_widget(Block::default().borders(Borders::ALL).border_type(BorderType::Double)
+                .border_style(Style::default().fg(yl(a))).title(Span::styled(format!(" {} ", title), Style::default().fg(or(a)).bold()))
+                .title_bottom(Line::from(Span::styled(format!(" {} sats | Any key ", amount), Style::default().fg(dm(a)))))
+                .style(Style::default().bg(Color::Black)), r);
+            let inner = Rect::new(r.x + 2, r.y + 1, r.width - 4, r.height - 2);
+            for (i, line) in qr_lines.iter().enumerate() {
+                let y = inner.y + i as u16;
+                if y >= inner.y + inner.height { break; }
+                f.render_widget(Paragraph::new(Span::styled(line.as_str(), Style::default().fg(Color::Rgb(255,255,255)).bg(Color::Rgb(0,0,0)))), Rect::new(inner.x, y, inner.width, 1));
+            }
+        }
         Popup::Detail { title, lines } => {
             let r = cr(
                 55.min(ar.width - 4),
