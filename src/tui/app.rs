@@ -400,7 +400,7 @@ impl App {
                     });
                 }
             },
-            Popup::Detail { .. } | Popup::Help => {}
+            Popup::Detail { .. } | Popup::Help | Popup::QrCode { .. } => {}
         }
     }
     fn row_count(&self) -> usize {

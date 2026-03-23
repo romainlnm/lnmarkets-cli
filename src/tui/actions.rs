@@ -338,16 +338,40 @@ impl App {
                     .or(r.get("paymentRequest"))
                     .and_then(|v| v.as_str());
                 if let Some(inv) = inv {
-                    let mut lines = vec![("Amount".into(), format!("{} sats", amount)), ("".into(), String::new())];
-                    // Word-wrap invoice into 45-char chunks
-                    let chars: Vec<char> = inv.chars().collect();
-                    for chunk in chars.chunks(45) {
-                        let s: String = chunk.iter().collect();
-                        lines.push(("".into(), s));
+                    let mut lines: Vec<(String, String)> = vec![("Amount".into(), format!("{} sats", amount))];
+                    // QR code
+                    let mut qr_lines = Vec::new();
+                    if let Ok(qr) = qrcode::QrCode::with_error_correction_level(inv.to_uppercase().as_bytes(), qrcode::EcLevel::L) {
+                        let w = qr.width();
+                        let colors = qr.to_colors();
+                        let border = "█".repeat(w + 4);
+                        qr_lines.push(border.clone());
+                        qr_lines.push(border.clone());
+                        let mut y = 0;
+                        while y < w {
+                            let mut s = String::from("██");
+                            for x in 0..w {
+                                let t = colors[y * w + x] == qrcode::Color::Light;
+                                let b = if y+1 < w { colors[(y+1) * w + x] == qrcode::Color::Light } else { true };
+                                s.push(match (t,b) { (true,true)=>'█', (true,false)=>'▀', (false,true)=>'▄', (false,false)=>' ' });
+                            }
+                            s.push_str("██");
+                            qr_lines.push(s);
+                            y += 2;
+                        }
+                        qr_lines.push(border.clone());
+                        qr_lines.push(border);
                     }
-                    lines.push(("".into(), String::new()));
-                    lines.push(("".into(), "Copy invoice to pay".into()));
-                    self.popup = Some(Popup::Detail { title: "⚡ Lightning Invoice".into(), lines });
+                    if !qr_lines.is_empty() {
+                        self.popup = Some(Popup::QrCode { title: "⚡ Lightning Invoice".into(), invoice: inv.to_string(), amount, qr_lines });
+                    } else {
+                        let mut lines: Vec<(String, String)> = vec![("Amount".into(), format!("{} sats", amount)), ("".into(), String::new())];
+                        let chars: Vec<char> = inv.chars().collect();
+                        for chunk in chars.chunks(45) { lines.push(("".into(), chunk.iter().collect())); }
+                        lines.push(("".into(), String::new()));
+                        lines.push(("".into(), "Copy invoice to pay".into()));
+                        self.popup = Some(Popup::Detail { title: "⚡ Lightning Invoice".into(), lines });
+                    }
                 } else {
                     self.notify(Notification::info(format!("{}", r)));
                 }
