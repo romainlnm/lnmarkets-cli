@@ -27,6 +27,7 @@ Try these with your AI agent:
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Interactive TUI](#interactive-tui)
 - [MCP Server](#mcp-server)
 - [Trading Daemon](#trading-daemon)
 - [Stats Dashboard](#stats-dashboard)
@@ -106,6 +107,48 @@ lnmarkets auth login
 lnmarkets account balance
 lnmarkets futures list
 ```
+
+## Interactive TUI
+
+Full-featured terminal dashboard for monitoring and trading.
+
+```bash
+lnmarkets tui              # Launch TUI
+lnmarkets tui --refresh 3  # Custom refresh interval (seconds)
+```
+
+### Features
+
+| Tab | Description |
+|-----|-------------|
+| Dashboard | Balance, P&L summary, BTC sparkline, positions preview |
+| Positions | Manage running positions (close, SL, TP, margin, cash-in) |
+| Orders | Pending orders (cancel individual or all) |
+| History | Closed trades |
+| Funding | Deposit/withdraw Lightning ⚡, on-chain ₿, generate addresses |
+| Recap | Fear & Greed, derivatives data, economic calendar |
+
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `1-6` | Jump to tab |
+| `Tab` / `←→` | Switch tabs |
+| `↑↓` / `jk` | Select row |
+| `o` | Open position |
+| `c` / `C` | Close position / Close all |
+| `s` / `t` | Set stop loss / take profit |
+| `d` / `w` | Deposit / Withdraw Lightning |
+| `T` | Toggle dark/light theme |
+| `N` | Toggle testnet/mainnet |
+| `L` | Login (if not authenticated) |
+| `D` | Launch trading daemon |
+| `?` | Help |
+| `q` | Quit |
+
+### Screenshots
+
+The TUI provides a live dashboard with auto-refreshing data, keyboard-driven trading, and full account management — all without leaving the terminal.
 
 ## MCP Server
 
@@ -509,7 +552,7 @@ All sources are public APIs with no authentication required. Failed sources are 
 
 ## Commands
 
-10 MCP tools across 4 service groups. 29 CLI commands across 8 groups.
+10 MCP tools across 4 service groups. 30 CLI commands across 9 groups.
 
 | Group | CLI Commands | MCP Tools | Auth | Description |
 |-------|--------------|-----------|------|-------------|
@@ -518,6 +561,7 @@ All sources are public APIs with no authentication required. Failed sources are 
 | futures | 11 | 5 | Yes | Open, close, update, add margin |
 | funding | 7 | 2 | Yes | Deposit, withdraw (Lightning & on-chain) |
 | auth | 4 | — | No | Login, logout, status |
+| tui | 1 | — | Optional | Interactive terminal dashboard |
 | daemon | 1 | — | Optional | Automated trading with agents |
 | stats | 1 | — | No | Trading performance dashboard |
 | recap | 1 | — | No | 24-48h BTC market overview |
