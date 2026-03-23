@@ -118,6 +118,14 @@ pub struct DaemonArgs {
     /// Agents to enable (comma-separated: pattern,macro,news,flow)
     #[arg(short, long, value_delimiter = ',', default_value = "pattern")]
     pub agents: Vec<String>,
+
+    /// Reversal cooldown in seconds (prevents rapid flip-flopping)
+    #[arg(long, default_value = "300")]
+    pub reversal_cooldown: u64,
+
+    /// Conflict threshold (0.0-1.0) - skip if agents disagree by less than this
+    #[arg(long, default_value = "0.3")]
+    pub conflict_threshold: f64,
 }
 
 /// Arguments for the stats command

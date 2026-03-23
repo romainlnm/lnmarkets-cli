@@ -41,6 +41,10 @@ pub struct DaemonConfig {
     pub stop_loss_pct: Option<f64>,
     /// Enabled agents
     pub agents: Vec<String>,
+    /// Cooldown period after reversal (in seconds)
+    pub reversal_cooldown_secs: u64,
+    /// Conflict threshold - skip if agents disagree by more than this (0.0-1.0)
+    pub conflict_threshold: f64,
 }
 
 impl Default for DaemonConfig {
@@ -54,6 +58,8 @@ impl Default for DaemonConfig {
             take_profit_pct: Some(5.0),
             stop_loss_pct: Some(3.0),
             agents: vec!["pattern".to_string()],
+            reversal_cooldown_secs: 300, // 5 minutes default
+            conflict_threshold: 0.3,     // Skip if agents disagree by >30%
         }
     }
 }
@@ -99,6 +105,7 @@ pub struct Daemon {
     registry: AgentRegistry,
     client: Option<LnmClient>,
     paper_state: RwLock<PaperState>,
+    last_reversal_time: RwLock<Option<DateTime<Utc>>>,
 }
 
 impl Daemon {
@@ -137,6 +144,7 @@ impl Daemon {
                 wins: 0,
                 losses: 0,
             }),
+            last_reversal_time: RwLock::new(None),
         }
     }
 
@@ -333,6 +341,8 @@ impl Daemon {
         if let Some(sl) = self.config.stop_loss_pct {
             println!("  Stop loss: -{:.1}%", sl);
         }
+        println!("  Reversal cooldown: {}s", self.config.reversal_cooldown_secs);
+        println!("  Conflict threshold: {:.0}%", self.config.conflict_threshold * 100.0);
         println!("  Agents: {:?}", self.config.agents);
         println!();
 
@@ -529,16 +539,20 @@ impl Daemon {
         let mut short_weight = 0.0;
         let mut long_count = 0;
         let mut short_count = 0;
+        let mut max_long_conf = 0.0f64;
+        let mut max_short_conf = 0.0f64;
 
         for signal in signals {
             match signal.direction {
                 Direction::Long => {
                     long_weight += signal.confidence;
                     long_count += 1;
+                    max_long_conf = max_long_conf.max(signal.confidence);
                 }
                 Direction::Short => {
                     short_weight += signal.confidence;
                     short_count += 1;
+                    max_short_conf = max_short_conf.max(signal.confidence);
                 }
                 Direction::Neutral => {}
             }
@@ -547,6 +561,20 @@ impl Daemon {
         // Need at least one directional signal
         if long_count == 0 && short_count == 0 {
             return None;
+        }
+
+        // Conflict detection: if both sides have high-confidence signals, skip
+        // This prevents whipsawing when agents strongly disagree
+        if max_long_conf >= self.config.min_confidence && max_short_conf >= self.config.min_confidence {
+            let conflict = (max_long_conf - max_short_conf).abs();
+            if conflict <= self.config.conflict_threshold {
+                println!(
+                    "  \x1b[33m→ CONFLICT: Agents disagree (LONG {:.0}% vs SHORT {:.0}%), skipping\x1b[0m",
+                    max_long_conf * 100.0,
+                    max_short_conf * 100.0
+                );
+                return None;
+            }
         }
 
         // Direction and confidence based on winning side only
@@ -593,12 +621,31 @@ impl Daemon {
                 || (pos.side == Direction::Short && action.direction == Direction::Long);
 
             if is_reversal {
+                // Check reversal cooldown
+                let last_reversal = self.last_reversal_time.read().await;
+                if let Some(last_time) = *last_reversal {
+                    let elapsed = (Utc::now() - last_time).num_seconds() as u64;
+                    if elapsed < self.config.reversal_cooldown_secs {
+                        let remaining = self.config.reversal_cooldown_secs - elapsed;
+                        println!(
+                            "  \x1b[33m→ COOLDOWN: Reversal blocked ({:.0}s remaining)\x1b[0m",
+                            remaining
+                        );
+                        return;
+                    }
+                }
+                drop(last_reversal);
+
                 println!(
                     "  \x1b[33m→ REVERSAL: {} → {} ({:.0}% confidence)\x1b[0m",
                     pos.side, action.direction, action.confidence * 100.0
                 );
                 // Close current position first (cross margin will net out)
                 let _ = self.close_cross_position("Signal reversal").await;
+
+                // Update last reversal time
+                let mut last_reversal = self.last_reversal_time.write().await;
+                *last_reversal = Some(Utc::now());
             } else if pos.side == action.direction {
                 // Same direction - skip to avoid adding to position
                 println!(

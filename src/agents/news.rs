@@ -34,6 +34,23 @@ impl NewsSource {
 /// Default crypto news sources
 fn default_sources() -> Vec<NewsSource> {
     vec![
+        // Fast breaking news sources (general market/geopolitical)
+        NewsSource::new(
+            "Reuters Markets",
+            "https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best",
+            0.95,
+        ),
+        NewsSource::new(
+            "ZeroHedge",
+            "https://feeds.feedburner.com/zerohedge/feed",
+            0.85,
+        ),
+        NewsSource::new(
+            "MarketWatch",
+            "https://feeds.marketwatch.com/marketwatch/topstories/",
+            0.85,
+        ),
+        // Crypto-specific sources
         NewsSource::new(
             "CoinDesk",
             "https://www.coindesk.com/arc/outboundfeeds/rss/",
@@ -58,6 +75,12 @@ fn default_sources() -> Vec<NewsSource> {
             "CryptoSlate",
             "https://cryptoslate.com/feed/",
             0.7,
+        ),
+        // Additional fast sources
+        NewsSource::new(
+            "The Block",
+            "https://www.theblock.co/rss.xml",
+            0.85,
         ),
     ]
 }
@@ -97,6 +120,9 @@ impl Default for SentimentKeywords {
                 "buy", "moon", "pump", "gains", "profit", "growth", "upgrade",
                 "partnership", "integration", "mainstream", "milestone", "record",
                 "inflow", "demand", "scarce", "halving", "bullrun",
+                // Geopolitical bullish (de-escalation, peace)
+                "peace", "ceasefire", "truce", "deal reached", "agreement", "talks positive",
+                "postpone", "delay strike", "diplomatic", "de-escalation",
             ],
             bearish: vec![
                 "crash", "plunge", "dump", "bearish", "sell-off", "selloff", "collapse",
@@ -104,11 +130,18 @@ impl Default for SentimentKeywords {
                 "regulation", "sec", "lawsuit", "fraud", "scam", "ponzi", "rug pull",
                 "bankruptcy", "insolvent", "liquidation", "outflow", "fear", "panic",
                 "correction", "decline", "drop", "fall", "tumble", "tank",
+                // Geopolitical bearish (conflict, escalation)
+                "war", "strike", "attack", "missile", "bomb", "invasion", "military action",
+                "sanctions", "escalation", "conflict", "troops", "nuclear", "retaliation",
             ],
             high_impact: vec![
                 "bitcoin", "btc", "lightning", "etf", "sec", "fed", "fomc",
                 "halving", "institutional", "blackrock", "fidelity", "microstrategy",
                 "el salvador", "regulation", "ban", "hack", "breaking",
+                // Geopolitical high-impact (market-moving events)
+                "trump", "biden", "president", "iran", "israel", "russia", "ukraine",
+                "china", "taiwan", "north korea", "middle east", "pentagon", "nato",
+                "oil", "gold", "treasury", "tariff", "trade war", "emergency",
             ],
         }
     }
@@ -130,10 +163,10 @@ pub struct NewsConfig {
 impl Default for NewsConfig {
     fn default() -> Self {
         Self {
-            max_age_hours: 4,
-            min_relevance: 0.3,
-            max_items: 20,
-            cache_ttl_mins: 5, // Refresh every 5 minutes
+            max_age_hours: 2,       // Focus on more recent news
+            min_relevance: 0.2,     // Lower threshold to catch more breaking news
+            max_items: 30,          // More items to analyze
+            cache_ttl_mins: 2,      // Refresh more frequently for breaking news
         }
     }
 }

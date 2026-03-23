@@ -103,6 +103,8 @@ async fn run() -> Result<()> {
                 take_profit_pct: Some(args.take_profit),
                 stop_loss_pct: Some(args.stop_loss),
                 agents: args.agents.clone(),
+                reversal_cooldown_secs: args.reversal_cooldown,
+                conflict_threshold: args.conflict_threshold,
             };
 
             // Only load client for live trading
