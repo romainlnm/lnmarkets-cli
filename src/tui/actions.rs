@@ -241,7 +241,7 @@ impl App {
             .request::<serde_json::Value, _>(
                 Method::PUT,
                 "futures/isolated/trade/stoploss",
-                Some(&serde_json::json!({"id":id,"value":p})),
+                Some(&{let mut m=serde_json::Map::new();m.insert("id".into(),serde_json::json!(id));m.insert("value".into(),if p.fract()==0.0{serde_json::Value::Number((p as i64).into())}else{serde_json::json!(p)});serde_json::Value::Object(m)}),
             )
             .await
         {
@@ -262,7 +262,7 @@ impl App {
             .request::<serde_json::Value, _>(
                 Method::PUT,
                 "futures/isolated/trade/takeprofit",
-                Some(&serde_json::json!({"id":id,"value":p})),
+                Some(&{let mut m=serde_json::Map::new();m.insert("id".into(),serde_json::json!(id));m.insert("value".into(),if p.fract()==0.0{serde_json::Value::Number((p as i64).into())}else{serde_json::json!(p)});serde_json::Value::Object(m)}),
             )
             .await
         {
