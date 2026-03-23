@@ -338,15 +338,16 @@ impl App {
                     .or(r.get("paymentRequest"))
                     .and_then(|v| v.as_str());
                 if let Some(inv) = inv {
-                    self.popup = Some(Popup::Detail {
-                        title: "⚡ Invoice".into(),
-                        lines: vec![
-                            ("Amount".into(), format!("{} sats", amount)),
-                            ("Invoice".into(), inv.to_string()),
-                            ("".into(), "Copy to pay".into()),
-                        ],
-                    });
-                    self.notify(Notification::success("Invoice generated"));
+                    let mut lines = vec![("Amount".into(), format!("{} sats", amount)), ("".into(), String::new())];
+                    // Word-wrap invoice into 45-char chunks
+                    let chars: Vec<char> = inv.chars().collect();
+                    for chunk in chars.chunks(45) {
+                        let s: String = chunk.iter().collect();
+                        lines.push(("".into(), s));
+                    }
+                    lines.push(("".into(), String::new()));
+                    lines.push(("".into(), "Copy invoice to pay".into()));
+                    self.popup = Some(Popup::Detail { title: "⚡ Lightning Invoice".into(), lines });
                 } else {
                     self.notify(Notification::info(format!("{}", r)));
                 }
