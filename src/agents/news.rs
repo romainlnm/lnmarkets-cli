@@ -36,9 +36,9 @@ fn default_sources() -> Vec<NewsSource> {
     vec![
         // Fast breaking news sources (general market/geopolitical)
         NewsSource::new(
-            "Reuters Markets",
-            "https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best",
-            0.95,
+            "CNBC Top News",
+            "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
+            0.9,
         ),
         NewsSource::new(
             "ZeroHedge",
@@ -49,6 +49,11 @@ fn default_sources() -> Vec<NewsSource> {
             "MarketWatch",
             "https://feeds.marketwatch.com/marketwatch/topstories/",
             0.85,
+        ),
+        NewsSource::new(
+            "Yahoo Finance",
+            "https://finance.yahoo.com/news/rssindex",
+            0.8,
         ),
         // Crypto-specific sources
         NewsSource::new(
