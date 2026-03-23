@@ -76,6 +76,8 @@ pub enum Commands {
 
     /// BTC market recap (24-48h overview)
     Recap(recap::RecapArgs),
+    /// Launch interactive TUI dashboard
+    Tui(TuiArgs),
 }
 
 /// Arguments for the daemon command
@@ -128,4 +130,12 @@ pub struct StatsArgs {
     /// Number of recent trades to show
     #[arg(short, long, default_value = "10")]
     pub limit: u32,
+}
+
+/// Arguments for the TUI command
+#[derive(clap::Args, Debug)]
+pub struct TuiArgs {
+    /// Refresh interval in seconds
+    #[arg(long, default_value = "5")]
+    pub refresh: u64,
 }
