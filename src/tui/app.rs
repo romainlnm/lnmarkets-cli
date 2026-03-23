@@ -247,6 +247,21 @@ impl App {
                     ));
                 }
             }
+            // History
+            KeyCode::Enter if self.active_tab == Tab::History => {
+                if let Some(t) = self.closed_trades.get(self.selected_row) {
+                    self.popup = Some(Popup::closed_trade_detail(
+                        &t.id,
+                        &t.side,
+                        t.quantity,
+                        t.leverage,
+                        t.entry_price,
+                        t.exit_price,
+                        t.pl,
+                        t.closed_at.as_deref(),
+                    ));
+                }
+            }
             KeyCode::Char('c') if self.active_tab == Tab::Positions => {
                 if let Some(p) = self.positions.get(self.selected_row) {
                     let (id, s, q, pl) =
@@ -466,7 +481,8 @@ impl App {
             {
                 self.orders = t;
             }
-            if let Ok(t) = c
+            // Try to fetch closed trades - handle both array and wrapped object responses
+            match c
                 .request::<Vec<Trade>, ()>(
                     Method::GET,
                     "futures/isolated/trades/closed?limit=20",
@@ -474,7 +490,27 @@ impl App {
                 )
                 .await
             {
-                self.closed_trades = t;
+                Ok(t) => self.closed_trades = t,
+                Err(_) => {
+                    // API might return wrapped format like {"data": [...]} or {"trades": [...]}
+                    if let Ok(wrapper) = c
+                        .request::<serde_json::Value, ()>(
+                            Method::GET,
+                            "futures/isolated/trades/closed?limit=20",
+                            None,
+                        )
+                        .await
+                    {
+                        let trades_value = wrapper
+                            .get("data")
+                            .or_else(|| wrapper.get("trades"))
+                            .cloned()
+                            .unwrap_or(wrapper);
+                        if let Ok(trades) = serde_json::from_value::<Vec<Trade>>(trades_value) {
+                            self.closed_trades = trades;
+                        }
+                    }
+                }
             }
             // Deposits & withdrawals history
             if let Ok(d) = c

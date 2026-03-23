@@ -373,4 +373,40 @@ impl Popup {
     pub fn help() -> Self {
         Popup::Help
     }
+    pub fn closed_trade_detail(
+        id: &str,
+        side: &str,
+        qty: i64,
+        lev: f64,
+        entry: Option<f64>,
+        exit: Option<f64>,
+        pl: Option<i64>,
+        closed_at: Option<&str>,
+    ) -> Self {
+        let mut l = vec![
+            ("ID".into(), id.into()),
+            ("Side".into(), side.to_uppercase()),
+            ("Qty".into(), format!("{} USD", qty)),
+            ("Lev".into(), format!("{}x", lev)),
+        ];
+        if let Some(e) = entry {
+            l.push(("Entry".into(), format!("${:.0}", e)));
+        }
+        if let Some(ex) = exit {
+            l.push(("Exit".into(), format!("${:.0}", ex)));
+        }
+        if let Some(p) = pl {
+            l.push((
+                "P&L".into(),
+                format!("{}{} sats", if p >= 0 { "+" } else { "" }, p),
+            ));
+        }
+        if let Some(c) = closed_at {
+            l.push(("Closed".into(), c.into()));
+        }
+        Popup::Detail {
+            title: format!("Closed {}", &id[..8.min(id.len())]),
+            lines: l,
+        }
+    }
 }

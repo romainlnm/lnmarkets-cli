@@ -719,6 +719,10 @@ fn ckeys(a: &App) -> Vec<Span<'static>> {
         .into_iter()
         .flatten()
         .collect(),
+        Tab::History => vec![ks(a, "⏎", "detail")]
+            .into_iter()
+            .flatten()
+            .collect(),
         _ => vec![Span::styled(
             " ↑↓ select │ 1-6 tabs",
             Style::default().fg(dm(a)),
