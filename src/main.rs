@@ -97,7 +97,7 @@ async fn run() -> Result<()> {
             };
 
             // Treasury configuration
-            let treasury = if args.treasury {
+            let treasury = if args.treasury || args.treasury_mock {
                 Some(TreasuryConfig {
                     claw_url: args.claw_url.clone(),
                     min_exchange_balance: args.treasury_min,
@@ -105,6 +105,7 @@ async fn run() -> Result<()> {
                     fund_amount: args.treasury_min * 2,  // Fund 2x minimum
                     auto_withdraw: true,
                     auto_fund: true,
+                    mock: args.treasury_mock,
                 })
             } else {
                 None

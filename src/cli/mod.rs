@@ -131,6 +131,10 @@ pub struct DaemonArgs {
     #[arg(long)]
     pub treasury: bool,
 
+    /// Mock treasury mode (simulates claw-cash for testing)
+    #[arg(long)]
+    pub treasury_mock: bool,
+
     /// Claw-cash daemon URL
     #[arg(long, default_value = "http://127.0.0.1:9137")]
     pub claw_url: String,

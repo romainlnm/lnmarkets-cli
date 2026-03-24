@@ -10,6 +10,7 @@ pub mod claw;
 use crate::api::LnmClient;
 use anyhow::Result;
 use reqwest::Method;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub use claw::ClawClient;
 
@@ -28,6 +29,8 @@ pub struct TreasuryConfig {
     pub auto_withdraw: bool,
     /// Enable auto-fund
     pub auto_fund: bool,
+    /// Mock mode for testing (simulates claw-cash without real daemon)
+    pub mock: bool,
 }
 
 impl Default for TreasuryConfig {
@@ -39,6 +42,7 @@ impl Default for TreasuryConfig {
             fund_amount: 50_000,               // Request 50k sats when funding
             auto_withdraw: true,
             auto_fund: true,
+            mock: false,
         }
     }
 }
@@ -47,21 +51,31 @@ impl Default for TreasuryConfig {
 pub struct Treasury {
     config: TreasuryConfig,
     claw: ClawClient,
+    /// Mock balance for testing (in sats)
+    mock_balance: AtomicU64,
 }
 
 impl Treasury {
     pub fn new(config: TreasuryConfig) -> Self {
         let claw = ClawClient::new(&config.claw_url);
-        Self { config, claw }
+        // Start mock with 500k sats
+        let mock_balance = AtomicU64::new(500_000);
+        Self { config, claw, mock_balance }
     }
 
     /// Check if claw-cash daemon is available
     pub async fn is_available(&self) -> bool {
+        if self.config.mock {
+            return true;
+        }
         self.claw.health_check().await.unwrap_or(false)
     }
 
     /// Get claw-cash wallet balance
     pub async fn get_wallet_balance(&self) -> Result<u64> {
+        if self.config.mock {
+            return Ok(self.mock_balance.load(Ordering::Relaxed));
+        }
         let balance = self.claw.get_balance().await?;
         Ok(balance.total)
     }
@@ -100,6 +114,15 @@ impl Treasury {
 
     /// Withdraw from LN Markets to claw-cash
     async fn withdraw_to_claw(&self, lnm_client: &LnmClient, amount: u64) -> Result<Option<TreasuryAction>> {
+        if self.config.mock {
+            // Mock mode: just update the simulated balance
+            self.mock_balance.fetch_add(amount, Ordering::Relaxed);
+            return Ok(Some(TreasuryAction::Withdraw {
+                amount,
+                destination: "claw-cash (mock)".to_string(),
+            }));
+        }
+
         // Create invoice from claw-cash to receive the funds
         let invoice = self.claw.create_invoice(amount).await?;
 
@@ -131,6 +154,16 @@ impl Treasury {
             }));
         }
 
+        if self.config.mock {
+            // Mock mode: simulate the balance change but don't actually fund
+            // (can't fund without real Lightning payment)
+            self.mock_balance.fetch_sub(self.config.fund_amount, Ordering::Relaxed);
+            return Ok(Some(TreasuryAction::Fund {
+                amount: self.config.fund_amount,
+                source: "claw-cash (mock - no actual deposit)".to_string(),
+            }));
+        }
+
         // Create deposit invoice from LN Markets
         let request = serde_json::json!({
             "amount": self.config.fund_amount,
@@ -157,8 +190,9 @@ impl Treasury {
     /// Print treasury status
     pub async fn print_status(&self, lnm_client: Option<&LnmClient>) {
         let claw_available = self.is_available().await;
+        let mode_label = if self.config.mock { " (mock)" } else { "" };
 
-        print!("  \x1b[35m[TREASURY]\x1b[0m claw-cash: ");
+        print!("  \x1b[35m[TREASURY]\x1b[0m claw-cash{}: ", mode_label);
         if claw_available {
             if let Ok(balance) = self.get_wallet_balance().await {
                 print!("\x1b[32m{} sats\x1b[0m", balance);
