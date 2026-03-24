@@ -31,6 +31,7 @@ Try these with your AI agent:
 - [MCP Server](#mcp-server)
 - [Trading Daemon](#trading-daemon)
 - [Stats Dashboard](#stats-dashboard)
+- [Treasury Integration](#treasury-integration-claw-cash)
 - [Market Recap](#market-recap)
 - [Commands](#commands)
 - [API Keys & Configuration](#api-keys--configuration)
@@ -295,18 +296,21 @@ The flow agent analyzes Binance Futures market data for institutional positionin
 
 ### News Agent - Sentiment Analysis
 
-The news agent fetches RSS headlines from crypto news sources and performs keyword-based sentiment analysis:
+The news agent fetches RSS headlines from news sources and performs keyword-based sentiment analysis:
 
-**Sources:** CoinDesk, Cointelegraph, Bitcoin Magazine, Decrypt, CryptoSlate
+**Sources:** CNBC, ZeroHedge, MarketWatch, Yahoo Finance, CoinDesk, Cointelegraph, Bitcoin Magazine, Decrypt, CryptoSlate, The Block
 
 | Bullish Keywords | Bearish Keywords |
 |------------------|------------------|
 | bull, surge, rally, soar, pump | bear, crash, dump, plunge, selloff |
 | breakout, ath, adoption, etf approved | hack, ban, fraud, investigation |
 | institutional, accumulation | liquidation, capitulation |
+| peace, ceasefire, de-escalation | war, strike, attack, missile, sanctions |
 
-- **Lookback:** 4 hours
-- **Cache:** 5 minutes (avoids rate limiting)
+**Geopolitical keywords:** The agent also monitors geopolitical events (Trump, Iran, Israel, Russia, China, NATO, etc.) that can move BTC markets.
+
+- **Lookback:** 2 hours
+- **Cache:** 2 minutes (fast refresh for breaking news)
 - **Weighting:** Sources have credibility scores
 
 ### Macro Agent - Economic Data Analysis
@@ -396,21 +400,59 @@ The daemon automatically manages positions:
 - If holding SHORT and agents signal LONG → closes short, opens long
 - If signal matches current position → skips (won't pyramid)
 
+### Anti-Whipsaw Protections
+
+Rapid market news (geopolitical events, Fed announcements) can cause agents to flip-flop between LONG and SHORT signals. Two safeguards prevent excessive reversals:
+
+**Reversal Cooldown:**
+- After a position reversal, the daemon waits before allowing another reversal
+- Default: 5 minutes (`--reversal-cooldown 300`)
+- During cooldown, contradicting signals are logged but not acted upon
+- TP/SL exits are still allowed during cooldown
+
+**Agent Conflict Detection:**
+- When agents strongly disagree, skip the trade entirely
+- Compares winning vs losing signal weights
+- Default threshold: 30% (`--conflict-threshold 0.3`)
+- Example: LONG 55% vs SHORT 45% = 10% margin → conflict, skip trade
+- Example: LONG 70% vs SHORT 30% = 40% margin → clear signal, trade
+
+**Why this matters:**
+```
+[14:30:00] NEWS: "Trump announces Iran sanctions"
+  → news: SHORT 80%
+  → REVERSAL: LONG → SHORT
+[14:31:00] NEWS: "Iran signals de-escalation"
+  → news: LONG 75%
+  → COOLDOWN: Reversal blocked (4m remaining)
+```
+
+Without these protections, the daemon would churn through positions, racking up fees on noise.
+
 ### Options
 
 ```bash
 lnmarkets daemon [OPTIONS]
 
 Options:
-  -a, --agents <AGENTS>      Agents to enable [default: pattern]
-  -i, --interval <SECS>      Analysis interval in seconds [default: 60]
-      --paper                Paper trading (simulated with real prices)
-      --live                 Live trading (real money!)
-      --min-confidence <N>   Minimum confidence to act (0.0-1.0) [default: 0.7]
-      --max-position <USD>   Maximum position size in USD [default: 10]
-      --leverage <N>         Leverage (1-100) [default: 10]
-      --take-profit <PCT>    Take profit percentage [default: 5]
-      --stop-loss <PCT>      Stop loss percentage [default: 3]
+  -a, --agents <AGENTS>           Agents to enable [default: pattern]
+  -i, --interval <SECS>           Analysis interval in seconds [default: 60]
+      --paper                     Paper trading (simulated with real prices)
+      --live                      Live trading (real money!)
+      --min-confidence <N>        Minimum confidence to act (0.0-1.0) [default: 0.7]
+      --max-position <USD>        Maximum position size in USD [default: 10]
+      --leverage <N>              Leverage (1-100) [default: 10]
+      --take-profit <PCT>         Take profit percentage [default: 5]
+      --stop-loss <PCT>           Stop loss percentage [default: 3]
+      --reversal-cooldown <SECS>  Cooldown after position reversal [default: 300]
+      --conflict-threshold <N>    Skip if agents disagree by less than this [default: 0.3]
+
+Treasury options (claw-cash integration):
+      --treasury                  Enable claw-cash treasury integration
+      --treasury-mock             Mock treasury (simulates claw-cash for testing)
+      --claw-url <URL>            Claw-cash daemon URL [default: http://127.0.0.1:9137]
+      --treasury-min <SATS>       Min balance on exchange (fund below) [default: 10000]
+      --treasury-max <SATS>       Max balance on exchange (withdraw above) [default: 100000]
 ```
 
 ### Examples
@@ -500,6 +542,71 @@ Daemon Orders (3 total)
 - Shows current cross position with unrealized P&L
 - Cross margin aggregates all orders into a single position
 
+## Treasury Integration (claw-cash)
+
+The daemon can connect to a [claw-cash](https://github.com/ArkLabsHQ/claw-cash) wallet for autonomous fund management. This allows an AI trading agent to maintain a target balance on the exchange while keeping excess funds in a secure hardware enclave.
+
+### How It Works
+
+1. **Auto-withdraw:** When exchange balance exceeds `--treasury-max`, withdraw to claw-cash
+2. **Auto-fund:** When exchange balance drops below `--treasury-min`, fund from claw-cash
+3. **Insufficient funds:** If claw-cash balance is too low to fund, log warning and continue
+
+```
+Exchange balance: 150,000 sats (max: 100,000)
+→ Withdraw 50,000 sats to claw-cash
+
+Exchange balance: 5,000 sats (min: 10,000)
+→ Request 20,000 sats from claw-cash
+```
+
+### Setup
+
+1. **Install claw-cash:** Follow [claw-cash setup](https://github.com/ArkLabsHQ/claw-cash)
+2. **Start the daemon:**
+   ```bash
+   cd claw-cash && ENCLAVE_DEV_MODE=true pnpm start:enclave
+   ```
+3. **Fund the enclave:** Use `claw-cash receive` to get a Lightning address
+4. **Enable treasury:**
+   ```bash
+   lnmarkets daemon --live --treasury --claw-url http://127.0.0.1:9137
+   ```
+
+### Mock Mode
+
+Test treasury logic without a real claw-cash instance:
+
+```bash
+lnmarkets daemon --paper --treasury-mock
+```
+
+Mock mode simulates:
+- Balance checks (starts at 100,000 sats)
+- Invoice generation (returns fake bolt11)
+- Payments (logs action, returns fake preimage)
+
+### Sample Output
+
+```
+Starting LN Markets trading daemon...
+  Mode: LIVE TRADING
+  Treasury: claw-cash connected (balance: 50000 sats)
+  ...
+
+[14:30:00] Analyzing...
+  [TREASURY] Exchange: 8500 sats (min: 10000) - funding...
+  [TREASURY] Requested 20000 sats from claw-cash
+  [TREASURY] Invoice paid, new exchange balance: 28500 sats
+```
+
+### Why claw-cash?
+
+- **Hardware enclave:** Private keys never leave secure memory
+- **AI-native:** Designed for autonomous agents
+- **Lightning-native:** Instant deposits/withdrawals
+- **Non-custodial:** You control the enclave
+
 ## Market Recap
 
 Get a 24-48h BTC derivatives market overview. Aggregates data from multiple free APIs — no authentication required.
@@ -562,7 +669,7 @@ All sources are public APIs with no authentication required. Failed sources are 
 | funding | 7 | 2 | Yes | Deposit, withdraw (Lightning & on-chain) |
 | auth | 4 | — | No | Login, logout, status |
 | tui | 1 | — | Optional | Interactive terminal dashboard |
-| daemon | 1 | — | Optional | Automated trading with agents |
+| daemon | 1 | — | Optional | Automated trading with agents, treasury integration |
 | stats | 1 | — | No | Trading performance dashboard |
 | recap | 1 | — | No | 24-48h BTC market overview |
 
