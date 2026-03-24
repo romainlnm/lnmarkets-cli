@@ -17,21 +17,42 @@ pub struct ClawClient {
     http: reqwest::Client,
 }
 
+/// Offchain balance breakdown
+#[derive(Debug, Deserialize, Default)]
+pub struct OffchainBalance {
+    #[serde(default)]
+    pub settled: u64,
+    #[serde(default)]
+    pub preconfirmed: u64,
+    #[serde(default)]
+    pub available: u64,
+    #[serde(default)]
+    pub recoverable: u64,
+}
+
+/// Onchain balance breakdown
+#[derive(Debug, Deserialize, Default)]
+pub struct OnchainBalance {
+    #[serde(default)]
+    pub confirmed: u64,
+    #[serde(default)]
+    pub unconfirmed: u64,
+    #[serde(default)]
+    pub total: u64,
+}
+
 /// Balance response from claw-cash
 #[derive(Debug, Deserialize)]
 pub struct BalanceResponse {
     /// Total balance in sats
     #[serde(default)]
     pub total: u64,
-    /// Confirmed balance in sats
+    /// Offchain (Lightning/Ark) balance
     #[serde(default)]
-    pub confirmed: u64,
-    /// Pending balance in sats
+    pub offchain: OffchainBalance,
+    /// Onchain balance
     #[serde(default)]
-    pub pending: u64,
-    /// Offchain (Lightning/Ark) balance in sats
-    #[serde(default)]
-    pub offchain: u64,
+    pub onchain: OnchainBalance,
 }
 
 /// Receive request for creating invoices
@@ -47,6 +68,9 @@ pub struct ReceiveRequest {
 #[derive(Debug, Deserialize)]
 pub struct ReceiveResponse {
     /// Lightning invoice (bolt11)
+    #[serde(default)]
+    pub bolt11: Option<String>,
+    /// Alternative field name for invoice
     #[serde(default)]
     pub invoice: Option<String>,
     /// On-chain or Ark address
@@ -70,6 +94,9 @@ pub struct SendResponse {
     /// Payment preimage (proof of payment)
     #[serde(default)]
     pub preimage: Option<String>,
+    /// Transaction ID
+    #[serde(default)]
+    pub txid: Option<String>,
     /// Payment hash
     #[serde(default)]
     pub payment_hash: Option<String>,
@@ -150,7 +177,9 @@ impl ClawClient {
         let data: ReceiveResponse = resp.json().await
             .context("Failed to parse receive response")?;
 
-        data.invoice
+        // Try bolt11 first (claw-cash standard), then invoice (fallback)
+        data.bolt11
+            .or(data.invoice)
             .ok_or_else(|| anyhow::anyhow!("No invoice in response"))
     }
 
