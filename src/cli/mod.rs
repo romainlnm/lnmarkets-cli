@@ -126,6 +126,22 @@ pub struct DaemonArgs {
     /// Conflict threshold (0.0-1.0) - skip if agents disagree by less than this
     #[arg(long, default_value = "0.3")]
     pub conflict_threshold: f64,
+
+    /// Enable claw-cash treasury integration
+    #[arg(long)]
+    pub treasury: bool,
+
+    /// Claw-cash daemon URL
+    #[arg(long, default_value = "http://127.0.0.1:9137")]
+    pub claw_url: String,
+
+    /// Min balance to keep on exchange (sats) - fund below this
+    #[arg(long, default_value = "10000")]
+    pub treasury_min: u64,
+
+    /// Max balance on exchange (sats) - withdraw above this
+    #[arg(long, default_value = "100000")]
+    pub treasury_max: u64,
 }
 
 /// Arguments for the stats command

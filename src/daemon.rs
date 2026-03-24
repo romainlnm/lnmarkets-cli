@@ -5,6 +5,7 @@
 use crate::agents::{pattern::PatternAgent, macro_cal::MacroAgent, news::NewsAgent, flow::FlowAgent, Agent, AgentRegistry, Direction, Signal};
 use crate::api::LnmClient;
 use crate::stats::save_trade_id;
+use crate::treasury::{Treasury, TreasuryConfig, TreasuryAction};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
@@ -45,6 +46,8 @@ pub struct DaemonConfig {
     pub reversal_cooldown_secs: u64,
     /// Conflict threshold - skip if agents disagree by more than this (0.0-1.0)
     pub conflict_threshold: f64,
+    /// Treasury configuration (claw-cash integration)
+    pub treasury: Option<TreasuryConfig>,
 }
 
 impl Default for DaemonConfig {
@@ -60,6 +63,7 @@ impl Default for DaemonConfig {
             agents: vec!["pattern".to_string()],
             reversal_cooldown_secs: 300, // 5 minutes default
             conflict_threshold: 0.3,     // Skip if agents disagree by >30%
+            treasury: None,              // Disabled by default
         }
     }
 }
@@ -106,6 +110,7 @@ pub struct Daemon {
     client: Option<LnmClient>,
     paper_state: RwLock<PaperState>,
     last_reversal_time: RwLock<Option<DateTime<Utc>>>,
+    treasury: Option<Treasury>,
 }
 
 impl Daemon {
@@ -133,6 +138,8 @@ impl Daemon {
             }
         }
 
+        let treasury = config.treasury.clone().map(Treasury::new);
+
         Self {
             config,
             registry,
@@ -145,6 +152,7 @@ impl Daemon {
                 losses: 0,
             }),
             last_reversal_time: RwLock::new(None),
+            treasury,
         }
     }
 
@@ -344,6 +352,16 @@ impl Daemon {
         println!("  Reversal cooldown: {}s", self.config.reversal_cooldown_secs);
         println!("  Conflict threshold: {:.0}%", self.config.conflict_threshold * 100.0);
         println!("  Agents: {:?}", self.config.agents);
+
+        // Treasury status
+        if let Some(ref treasury) = self.treasury {
+            let available = treasury.is_available().await;
+            if available {
+                println!("  Treasury: \x1b[35mclaw-cash connected\x1b[0m");
+            } else {
+                println!("  Treasury: \x1b[33mclaw-cash offline\x1b[0m");
+            }
+        }
         println!();
 
         if self.config.mode == TradingMode::Paper {
@@ -373,6 +391,22 @@ impl Daemon {
                 if self.check_tp_sl().await {
                     println!();
                     continue;
+                }
+
+                // Treasury management (auto-fund/withdraw)
+                if let Some(ref treasury) = self.treasury {
+                    if let Some(ref client) = self.client {
+                        treasury.print_status(Some(client)).await;
+                        match treasury.manage(client).await {
+                            Ok(Some(action)) => {
+                                println!("  \x1b[35m[TREASURY]\x1b[0m {}", action);
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                println!("  \x1b[31m[TREASURY]\x1b[0m Error: {}", e);
+                            }
+                        }
+                    }
                 }
             }
 
