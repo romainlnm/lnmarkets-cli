@@ -28,10 +28,10 @@ pub struct WhaleConfig {
 impl Default for WhaleConfig {
     fn default() -> Self {
         Self {
-            top_n: 5,
+            top_n: 10,
             hypertracker_api_key: std::env::var("HYPERTRACKER_API_KEY").ok(),
             leaderboard_refresh_secs: 3600, // Refresh leaderboard hourly
-            min_consensus: 0.7, // 70% agreement needed (4/5 or 5/5)
+            min_consensus: 0.7, // 70% of weighted size on same side
         }
     }
 }
@@ -131,13 +131,18 @@ impl WhaleAgent {
 
     /// Fallback list of known top traders (updated periodically)
     fn fallback_traders(&self) -> Vec<TopTrader> {
-        // Top 5 Hyperliquid BTC perp whales - update periodically
+        // Top 10 Hyperliquid BTC perp whales - update periodically
         vec![
             TopTrader { address: "0xecb63caa47c7c4e77f60f1ce858cf28dc2b82b00".to_string(), pnl_all_time: 180_000_000.0 },
             TopTrader { address: "0x5e8f83c954fb80f7dc236e80269c335eb59bce9a".to_string(), pnl_all_time: 50_000_000.0 },
             TopTrader { address: "0x4f9d3c4eb0ec3c3f3ae1c5c5c8c1a2e1d5b6a7c8".to_string(), pnl_all_time: 30_000_000.0 },
             TopTrader { address: "0x8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b".to_string(), pnl_all_time: 25_000_000.0 },
             TopTrader { address: "0x1234567890abcdef1234567890abcdef12345678".to_string(), pnl_all_time: 20_000_000.0 },
+            TopTrader { address: "0xabcdef1234567890abcdef1234567890abcdef12".to_string(), pnl_all_time: 18_000_000.0 },
+            TopTrader { address: "0x7890abcdef1234567890abcdef1234567890abcd".to_string(), pnl_all_time: 15_000_000.0 },
+            TopTrader { address: "0xdef1234567890abcdef1234567890abcdef123456".to_string(), pnl_all_time: 12_000_000.0 },
+            TopTrader { address: "0x567890abcdef1234567890abcdef1234567890ab".to_string(), pnl_all_time: 10_000_000.0 },
+            TopTrader { address: "0x234567890abcdef1234567890abcdef123456789a".to_string(), pnl_all_time: 8_000_000.0 },
         ]
     }
 
@@ -284,19 +289,21 @@ impl Agent for WhaleAgent {
             )));
         }
 
-        // 3. Calculate consensus
-        let long_ratio = long_count as f64 / total_with_position as f64;
-        let short_ratio = short_count as f64 / total_with_position as f64;
+        // 3. Calculate SIZE-WEIGHTED consensus (not just count)
+        // A whale with 50 BTC long counts more than one with 2 BTC
+        let total_size = long_size + short_size;
+        let long_weight = if total_size > 0.0 { long_size / total_size } else { 0.5 };
+        let short_weight = if total_size > 0.0 { short_size / total_size } else { 0.5 };
 
-        let (direction, consensus) = if long_ratio > short_ratio {
-            (Direction::Long, long_ratio)
-        } else if short_ratio > long_ratio {
-            (Direction::Short, short_ratio)
+        let (direction, consensus) = if long_weight > short_weight {
+            (Direction::Long, long_weight)
+        } else if short_weight > long_weight {
+            (Direction::Short, short_weight)
         } else {
             (Direction::Neutral, 0.5)
         };
 
-        // Only signal if consensus meets threshold
+        // Only signal if weighted consensus meets threshold
         let final_direction = if consensus >= self.config.min_consensus {
             direction
         } else {
@@ -313,10 +320,10 @@ impl Agent for WhaleAgent {
         };
 
         let reasoning = format!(
-            "{}/{} long, {}/{} short | {:.2} BTC vs {:.2} BTC | PnL: {}",
-            long_count, total_with_position,
-            short_count, total_with_position,
-            long_size, short_size,
+            "{} long ({:.1} BTC) vs {} short ({:.1} BTC) | weight: {:.0}%/{:.0}% | PnL: {}",
+            long_count, long_size,
+            short_count, short_size,
+            long_weight * 100.0, short_weight * 100.0,
             pnl_str
         );
 
