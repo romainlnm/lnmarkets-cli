@@ -62,7 +62,7 @@ impl Default for DaemonConfig {
             leverage: 10,
             take_profit_pct: Some(10.0),
             stop_loss_pct: Some(5.0),
-            trailing_stop_pct: None,  // Disabled by default
+            trailing_stop_pct: Some(3.0),  // 3% from peak by default
             agents: vec!["pattern".to_string()],
             reversal_cooldown_secs: 300, // 5 minutes default
             conflict_threshold: 0.3,     // Skip if agents disagree by >30%

@@ -119,7 +119,7 @@ async fn run() -> Result<()> {
                 leverage: args.leverage,
                 take_profit_pct: Some(args.take_profit),
                 stop_loss_pct: Some(args.stop_loss),
-                trailing_stop_pct: args.trailing_stop,
+                trailing_stop_pct: Some(args.trailing_stop),
                 agents: args.agents.clone(),
                 reversal_cooldown_secs: args.reversal_cooldown,
                 conflict_threshold: args.conflict_threshold,

@@ -491,7 +491,7 @@ Options:
       --leverage <N>              Leverage (1-100) [default: 10]
       --take-profit <PCT>         Take profit percentage [default: 10]
       --stop-loss <PCT>           Stop loss percentage [default: 5]
-      --trailing-stop <PCT>       Trailing stop - close if ROE drops this much from peak
+      --trailing-stop <PCT>       Trailing stop - close if ROE drops this much from peak [default: 3]
       --reversal-cooldown <SECS>  Cooldown after position reversal [default: 300]
       --conflict-threshold <N>    Skip if agents disagree by less than this [default: 0.3]
 
