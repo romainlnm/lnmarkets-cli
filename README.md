@@ -251,10 +251,12 @@ lnmarkets daemon --agents pattern,macro,news,flow --interval 60
 
 | Agent | Data Source | Signals |
 |-------|-------------|---------|
-| `pattern` | Binance Spot API | RSI, EMA crossover, Bollinger Bands |
+| `pattern` | Binance Spot API | RSI, MACD, EMA crossover, Bollinger Bands |
+| `flow` | Binance Futures API | Taker volume, order book, funding rate, L/S ratio |
 | `macro` | TradingView API | Economic data surprises, event warnings |
 | `news` | RSS feeds | Sentiment analysis from crypto news |
-| `flow` | Binance Futures API | Order book imbalance, funding rate, OI, L/S ratio |
+
+Default: `pattern,flow` — the two most reliable signal generators.
 
 All data sources are **public APIs** — no API keys required.
 
@@ -264,33 +266,38 @@ All data sources are **public APIs** — no API keys required.
 | Agent | Endpoint | Data |
 |-------|----------|------|
 | `pattern` | `api.binance.com/api/v3/klines` | BTC/USDT price candles |
+| `flow` | `fapi.binance.com/fapi/v1/*` | Depth, funding, OI, L/S ratio, taker volume |
 | `macro` | `economic-calendar.tradingview.com/events` | Economic releases with actual vs forecast |
-| `news` | CoinDesk, Cointelegraph, Bitcoin Magazine, Decrypt, CryptoSlate | RSS headlines |
-| `flow` | `fapi.binance.com/fapi/v1/depth`, `/fundingRate`, `/openInterest` | Futures market data |
+| `news` | CNBC, Yahoo Finance, CoinDesk, etc. | RSS headlines |
 
 </details>
 
 ### Pattern Agent - Technical Analysis
 
-The pattern agent fetches 1-minute candles from Binance and calculates three indicators:
+The pattern agent fetches 1-minute candles from Binance and calculates four indicators with weighted voting:
 
-| Indicator | Bullish Signal | Bearish Signal |
-|-----------|----------------|----------------|
-| RSI (14-period) | RSI < 30 (oversold) | RSI > 70 (overbought) |
-| EMA Crossover (9/21) | EMA9 > EMA21 | EMA9 < EMA21 |
-| Bollinger Bands (20, 2σ) | Price below lower band | Price above upper band |
+| Indicator | Weight | Bullish Signal | Bearish Signal |
+|-----------|--------|----------------|----------------|
+| RSI (14-period) | 1.5 | RSI < 30 (oversold) | RSI > 70 (overbought) |
+| MACD (12/26/9) | 1.3 | MACD > Signal line | MACD < Signal line |
+| EMA Crossover (9/21) | 1.0 | EMA9 > EMA21 (+0.05%) | EMA9 < EMA21 (-0.05%) |
+| Bollinger Bands (20, 2σ) | 0.8 | Price below lower band | Price above upper band |
 
-Signals are combined with weighted voting. Confidence scales with indicator agreement and RSI extremes.
+Confidence = weighted average of agreeing signals. RSI and MACD carry the most weight as leading indicators.
 
 ### Flow Agent - Order Flow Analysis
 
-The flow agent analyzes Binance Futures market data for institutional positioning:
+The flow agent analyzes Binance Futures market data for real-time order flow and positioning:
 
-| Indicator | Bullish Signal | Bearish Signal |
-|-----------|----------------|----------------|
-| Order Book Imbalance | Bids > Asks (buying pressure) | Asks > Bids (selling pressure) |
-| Funding Rate | Negative (shorts pay longs) | Positive (longs pay shorts) |
-| Long/Short Ratio | Ratio < 0.8 (contrarian: crowded short) | Ratio > 1.5 (contrarian: crowded long) |
+| Indicator | Weight | Bullish Signal | Bearish Signal |
+|-----------|--------|----------------|----------------|
+| Taker Buy/Sell Volume | 1.5 | Ratio > 1.15 (aggressive buying) | Ratio < 0.87 (aggressive selling) |
+| Long/Short Ratio | 1.3 | Ratio < 0.77 (contrarian: crowded short) | Ratio > 1.3 (contrarian: crowded long) |
+| Funding Rate | 1.2 | < -5bps (shorts pay longs) | > +5bps (longs pay shorts) |
+| Order Book Imbalance | 1.0 | Bids > Asks by 15%+ | Asks > Bids by 15%+ |
+| Open Interest Change | 0.8 | Rising OI (new positions) | Falling OI (closing positions) |
+
+**Taker volume** is the strongest signal — it shows actual market orders hitting the book, not just passive liquidity.
 
 **Contrarian logic:** Extreme positioning often precedes reversals. When everyone is long, the market tends to drop.
 
