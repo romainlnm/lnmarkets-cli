@@ -242,7 +242,7 @@ impl Daemon {
             side,
             quantity: quantity.abs(),
             entry_price,
-            margin,
+            margin: position_margin,  // Position margin in sats
             pl,
             pl_pct,
         })
