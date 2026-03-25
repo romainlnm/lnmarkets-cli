@@ -9,6 +9,7 @@ pub mod pattern;
 pub mod macro_cal;
 pub mod news;
 pub mod flow;
+pub mod whale;
 
 /// Trading direction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

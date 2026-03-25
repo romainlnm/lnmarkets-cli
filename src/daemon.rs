@@ -2,7 +2,7 @@
 //!
 //! Runs agents in a loop, combines signals, and optionally executes trades.
 
-use crate::agents::{pattern::PatternAgent, macro_cal::MacroAgent, news::NewsAgent, flow::FlowAgent, Agent, AgentRegistry, Direction, Signal};
+use crate::agents::{pattern::PatternAgent, macro_cal::MacroAgent, news::NewsAgent, flow::FlowAgent, whale::WhaleAgent, Agent, AgentRegistry, Direction, Signal};
 use crate::api::LnmClient;
 use crate::stats::save_trade_id;
 use crate::treasury::{Treasury, TreasuryConfig, TreasuryAction};
@@ -131,6 +131,9 @@ impl Daemon {
                 }
                 "flow" => {
                     registry.register(Box::new(FlowAgent::with_defaults()));
+                }
+                "whale" => {
+                    registry.register(Box::new(WhaleAgent::with_defaults()));
                 }
                 _ => {
                     eprintln!("Unknown agent: {}", agent_name);
