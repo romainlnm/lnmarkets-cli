@@ -276,6 +276,14 @@ impl Agent for WhaleAgent {
             return Ok(Signal::neutral("whale", &format!("0/{} whales have BTC positions", traders.len())));
         }
 
+        // Require at least 3 traders with positions for a meaningful signal
+        if total_with_position < 3 {
+            return Ok(Signal::neutral("whale", &format!(
+                "Only {}/{} whales have BTC positions (need 3+)",
+                total_with_position, traders.len()
+            )));
+        }
+
         // 3. Calculate consensus
         let long_ratio = long_count as f64 / total_with_position as f64;
         let short_ratio = short_count as f64 / total_with_position as f64;
