@@ -305,29 +305,29 @@ The flow agent analyzes Binance Futures market data for real-time order flow and
 
 ### Whale Agent - Copy Trading
 
-The whale agent tracks BTC positions of top performers on Hyperliquid and generates signals based on consensus:
+The whale agent tracks BTC positions of top performers on Hyperliquid and generates **position-size-weighted** signals:
 
-1. **Fetches top 5 traders** from [HyperTracker](https://hypertracker.io/) leaderboard (ranked by all-time PnL)
+1. **Fetches top 10 traders** from [HyperTracker](https://hypertracker.io/) leaderboard (ranked by all-time PnL)
 2. **Queries each trader's BTC position** via Hyperliquid's free `clearinghouseState` API
-3. **Calculates consensus** — counts longs vs shorts among active positions
-4. **Signals when 70%+ agree** — needs 4/5 or 5/5 traders on same side
+3. **Calculates weighted consensus** — weights by position size (BTC), not just count
+4. **Signals when 70%+ of weighted size agrees** — a 50 BTC position counts more than a 2 BTC position
 
-| Consensus | Signal |
-|-----------|--------|
-| 5/5 long (100%) | LONG |
-| 4/5 long (80%) | LONG |
-| 3/5 long (60%) | NEUTRAL (below 70% threshold) |
-| 4/5 short (80%) | SHORT |
+| Positions | Weighted Consensus | Signal |
+|-----------|-------------------|--------|
+| 3 long (80 BTC) vs 2 short (10 BTC) | 89% long | LONG |
+| 4 long (20 BTC) vs 3 short (15 BTC) | 57% long | NEUTRAL (below 70%) |
+| 2 long (5 BTC) vs 5 short (60 BTC) | 92% short | SHORT |
 
 **Sample output:**
 ```
-▲ [whale] LONG (72%): 4/5 long, 1/5 short | 8.50 BTC vs 2.10 BTC | PnL: +$85K
+▲ [whale] LONG (75%): 6 long (80.5 BTC) vs 2 short (12.3 BTC) | weight: 87%/13% | PnL: +$125K
 ```
 
 **Rate limits:**
 - Leaderboard cached for 1 hour (1 request)
-- Position queries: 5 per cycle (one per trader)
+- Position queries: 10 per cycle (one per trader)
 - Free tier: 100 requests/day — sufficient for hourly updates
+- Requires minimum 3 traders with BTC positions to generate signal
 
 **Optional:** Set `HYPERTRACKER_API_KEY` for higher rate limits.
 
@@ -443,9 +443,9 @@ Rapid market news (geopolitical events, Fed announcements) can cause agents to f
 
 **Reversal Premium (+10% confidence):**
 - Reversals require 10% higher confidence than regular trades
-- If `--min-confidence 0.6`, reversals need 70% confidence
+- Default: 80% min confidence → reversals need 90%
 - Accounts for double trading fees (close current + open opposite)
-- Example: 65% signal would open a new position, but won't reverse an existing one
+- Example: 85% signal would open a new position, but won't reverse an existing one
 
 **Reversal Cooldown:**
 - After a position reversal, the daemon waits before allowing another reversal
@@ -463,13 +463,13 @@ Rapid market news (geopolitical events, Fed announcements) can cause agents to f
 **Why this matters:**
 ```
 [14:30:00] NEWS: "Trump announces Iran sanctions"
-  → Confidence: 65% (min: 60%)
-  → REVERSAL BLOCKED: 65% < 70% required (+10% fee premium)
+  → Confidence: 85% (min: 80%)
+  → REVERSAL BLOCKED: 85% < 90% required (+10% fee premium)
 [14:35:00] NEWS: "Iran threatens retaliation"
-  → Confidence: 80%
+  → Confidence: 92%
   → REVERSAL: LONG → SHORT
 [14:36:00] NEWS: "Iran signals de-escalation"
-  → Confidence: 75%
+  → Confidence: 88%
   → COOLDOWN: Reversal blocked (4m remaining)
 ```
 
@@ -485,11 +485,11 @@ Options:
   -i, --interval <SECS>           Analysis interval in seconds [default: 60]
       --paper                     Paper trading (simulated with real prices)
       --live                      Live trading (real money!)
-      --min-confidence <N>        Minimum confidence to act (0.0-1.0) [default: 0.7]
+      --min-confidence <N>        Minimum confidence to act (0.0-1.0) [default: 0.8]
       --max-position <USD>        Maximum position size in USD [default: 10]
       --leverage <N>              Leverage (1-100) [default: 10]
-      --take-profit <PCT>         Take profit percentage [default: 5]
-      --stop-loss <PCT>           Stop loss percentage [default: 3]
+      --take-profit <PCT>         Take profit percentage [default: 10]
+      --stop-loss <PCT>           Stop loss percentage [default: 5]
       --reversal-cooldown <SECS>  Cooldown after position reversal [default: 300]
       --conflict-threshold <N>    Skip if agents disagree by less than this [default: 0.3]
 
