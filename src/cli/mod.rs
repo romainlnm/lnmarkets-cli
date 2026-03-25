@@ -115,6 +115,10 @@ pub struct DaemonArgs {
     #[arg(long, default_value = "5")]
     pub stop_loss: f64,
 
+    /// Trailing stop percentage - close if ROE drops this much from peak (e.g., 3 = close if drops 3% from peak)
+    #[arg(long)]
+    pub trailing_stop: Option<f64>,
+
     /// Agents to enable (comma-separated: pattern,macro,news,flow)
     #[arg(short, long, value_delimiter = ',', default_value = "pattern,flow")]
     pub agents: Vec<String>,

@@ -40,6 +40,8 @@ pub struct DaemonConfig {
     pub take_profit_pct: Option<f64>,
     /// Stop loss percentage (e.g., 3.0 = 3%)
     pub stop_loss_pct: Option<f64>,
+    /// Trailing stop percentage - close if ROE drops this much from peak (e.g., 3.0 = 3%)
+    pub trailing_stop_pct: Option<f64>,
     /// Enabled agents
     pub agents: Vec<String>,
     /// Cooldown period after reversal (in seconds)
@@ -60,6 +62,7 @@ impl Default for DaemonConfig {
             leverage: 10,
             take_profit_pct: Some(10.0),
             stop_loss_pct: Some(5.0),
+            trailing_stop_pct: None,  // Disabled by default
             agents: vec!["pattern".to_string()],
             reversal_cooldown_secs: 300, // 5 minutes default
             conflict_threshold: 0.3,     // Skip if agents disagree by >30%
@@ -110,6 +113,8 @@ pub struct Daemon {
     client: Option<LnmClient>,
     paper_state: RwLock<PaperState>,
     last_reversal_time: RwLock<Option<DateTime<Utc>>>,
+    /// Peak ROE achieved in current position (for trailing stop)
+    peak_roe: RwLock<Option<f64>>,
     treasury: Option<Treasury>,
 }
 
@@ -155,6 +160,7 @@ impl Daemon {
                 losses: 0,
             }),
             last_reversal_time: RwLock::new(None),
+            peak_roe: RwLock::new(None),
             treasury,
         }
     }
@@ -298,7 +304,11 @@ impl Daemon {
 
         let position = match self.get_cross_position().await {
             Some(p) => p,
-            None => return false,
+            None => {
+                // No position - reset peak ROE (position may have been closed externally)
+                *self.peak_roe.write().await = None;
+                return false;
+            }
         };
 
         // Calculate Net ROE (after estimated fees)
@@ -315,7 +325,11 @@ impl Daemon {
                     net_roe, tp_pct
                 );
                 match self.close_cross_position(&reason).await {
-                    Ok(_) => return true,
+                    Ok(_) => {
+                        // Reset peak ROE on position close
+                        *self.peak_roe.write().await = None;
+                        return true;
+                    }
                     Err(e) => eprintln!("  \x1b[31m[ERROR]\x1b[0m Failed to close: {}", e),
                 }
             }
@@ -329,8 +343,46 @@ impl Daemon {
                     net_roe, sl_pct
                 );
                 match self.close_cross_position(&reason).await {
-                    Ok(_) => return true,
+                    Ok(_) => {
+                        // Reset peak ROE on position close
+                        *self.peak_roe.write().await = None;
+                        return true;
+                    }
                     Err(e) => eprintln!("  \x1b[31m[ERROR]\x1b[0m Failed to close: {}", e),
+                }
+            }
+        }
+
+        // Trailing stop logic - only activates when in profit
+        if let Some(trail_pct) = self.config.trailing_stop_pct {
+            let mut peak = self.peak_roe.write().await;
+
+            // Update peak ROE if we're in profit and current ROE is higher
+            if net_roe > 0.0 {
+                match *peak {
+                    Some(p) if net_roe > p => *peak = Some(net_roe),
+                    None => *peak = Some(net_roe),
+                    _ => {}
+                }
+            }
+
+            // Check if ROE dropped too far from peak
+            if let Some(peak_val) = *peak {
+                let trail_threshold = peak_val - trail_pct;
+                if net_roe <= trail_threshold && peak_val >= trail_pct {
+                    // Only trigger if we had meaningful gains (peak >= trail%)
+                    let reason = format!(
+                        "Trailing stop triggered (Net ROE {:+.2}% dropped from peak {:+.2}%, trail: {:.1}%)",
+                        net_roe, peak_val, trail_pct
+                    );
+                    drop(peak); // Release lock before async call
+                    match self.close_cross_position(&reason).await {
+                        Ok(_) => {
+                            *self.peak_roe.write().await = None;
+                            return true;
+                        }
+                        Err(e) => eprintln!("  \x1b[31m[ERROR]\x1b[0m Failed to close: {}", e),
+                    }
                 }
             }
         }
@@ -357,6 +409,9 @@ impl Daemon {
         }
         if let Some(sl) = self.config.stop_loss_pct {
             println!("  Stop loss: -{:.1}%", sl);
+        }
+        if let Some(trail) = self.config.trailing_stop_pct {
+            println!("  Trailing stop: {:.1}% from peak", trail);
         }
         println!("  Reversal cooldown: {}s", self.config.reversal_cooldown_secs);
         println!("  Conflict threshold: {:.0}%", self.config.conflict_threshold * 100.0);
@@ -397,9 +452,21 @@ impl Daemon {
                     let roe_color = if net_roe >= 0.0 { "\x1b[32m" } else { "\x1b[31m" };
                     let tp = self.config.take_profit_pct.unwrap_or(5.0);
                     let sl = self.config.stop_loss_pct.unwrap_or(3.0);
+
+                    // Build trailing stop info if enabled
+                    let trail_info = if let Some(trail_pct) = self.config.trailing_stop_pct {
+                        let peak = self.peak_roe.read().await;
+                        match *peak {
+                            Some(p) => format!(" | Trail: {:.1}% from peak {:.1}%", trail_pct, p),
+                            None => format!(" | Trail: {:.1}% (no peak yet)", trail_pct),
+                        }
+                    } else {
+                        String::new()
+                    };
+
                     println!(
-                        "  \x1b[36m[POSITION]\x1b[0m {} ${:.0} @ ${:.0} | Net ROE: {}{:+.2}%\x1b[0m (TP: +{:.0}% / SL: -{:.0}%) | Net P&L: {:+} sats (fees: ~{} sats)",
-                        side_icon, pos.quantity, pos.entry_price, roe_color, net_roe, tp, sl, net_pl, est_fees
+                        "  \x1b[36m[POSITION]\x1b[0m {} ${:.0} @ ${:.0} | Net ROE: {}{:+.2}%\x1b[0m (TP: +{:.0}% / SL: -{:.0}%){} | Net P&L: {:+} sats (fees: ~{} sats)",
+                        side_icon, pos.quantity, pos.entry_price, roe_color, net_roe, tp, sl, trail_info, net_pl, est_fees
                     );
                 }
 

@@ -491,6 +491,7 @@ Options:
       --leverage <N>              Leverage (1-100) [default: 10]
       --take-profit <PCT>         Take profit percentage [default: 10]
       --stop-loss <PCT>           Stop loss percentage [default: 5]
+      --trailing-stop <PCT>       Trailing stop - close if ROE drops this much from peak
       --reversal-cooldown <SECS>  Cooldown after position reversal [default: 300]
       --conflict-threshold <N>    Skip if agents disagree by less than this [default: 0.3]
 
@@ -517,9 +518,33 @@ lnmarkets daemon --live --agents pattern,flow --max-position 20 --leverage 10
 # Custom TP/SL: tighter stop loss, wider take profit
 lnmarkets daemon --live --agents pattern,macro,news,flow --take-profit 10 --stop-loss 2
 
+# Trailing stop: lock in gains when ROE drops 3% from peak (e.g., peak 8% → close at 5%)
+lnmarkets daemon --live --agents pattern,flow --trailing-stop 3
+
 # Conservative: smaller positions, higher confidence required
 lnmarkets daemon --live --agents pattern,macro,news,flow --max-position 10 --leverage 5 --min-confidence 0.8
 ```
+
+### Exit Strategies
+
+The daemon supports three exit mechanisms based on **Net ROE** (after estimated fees):
+
+| Strategy | Trigger | Use Case |
+|----------|---------|----------|
+| **Take Profit** | Net ROE >= +X% | Lock in target gains |
+| **Stop Loss** | Net ROE <= -X% | Limit downside risk |
+| **Trailing Stop** | Net ROE drops X% from peak | Protect profits in winning trades |
+
+**Trailing Stop Example:**
+```
+Position opens at $70,000
+  → Price rises to $71,500, Net ROE hits +8% (peak)
+  → Price retraces to $71,000, Net ROE at +5%
+  → With --trailing-stop 3: Close at +5% (dropped 3% from peak of 8%)
+  → Without trailing stop: Would hold until TP (+10%) or SL (-5%)
+```
+
+The trailing stop only activates once the position is profitable and the peak ROE exceeds the trail percentage.
 
 ### Sample Output
 

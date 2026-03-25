@@ -583,6 +583,7 @@ impl App {
             leverage: lev,
             take_profit_pct: Some(5.0),
             stop_loss_pct: Some(3.0),
+            trailing_stop_pct: None,     // TUI doesn't support trailing stop yet
             agents: agents.clone(),
             reversal_cooldown_secs: 300, // 5 minute cooldown
             conflict_threshold: 0.3,     // Skip if agents disagree by <30%
