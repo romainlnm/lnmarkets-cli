@@ -253,13 +253,13 @@ lnmarkets daemon --agents pattern,macro,news,flow --interval 60
 |-------|-------------|---------|
 | `pattern` | Binance Spot API | RSI, MACD, EMA crossover, Bollinger Bands |
 | `flow` | Binance Futures API | Taker volume, order book, funding rate, L/S ratio |
-| `whale` | Hyperliquid + HyperTracker | Copy top 5 BTC perp traders |
+| `whale` | Hyperliquid API | Copy top BTC perp traders (8 verified whales) |
 | `macro` | TradingView API | Economic data surprises, event warnings |
 | `news` | RSS feeds | Sentiment analysis from crypto news |
 
 Default: `pattern,flow` — the two most reliable signal generators.
 
-All data sources are **public APIs** — no API keys required (HyperTracker free tier: 100 req/day).
+All data sources are **public APIs** — no API keys required.
 
 <details>
 <summary>Data source details</summary>
@@ -268,7 +268,7 @@ All data sources are **public APIs** — no API keys required (HyperTracker free
 |-------|----------|------|
 | `pattern` | `api.binance.com/api/v3/klines` | BTC/USDT price candles |
 | `flow` | `fapi.binance.com/fapi/v1/*` | Depth, funding, OI, L/S ratio, taker volume |
-| `whale` | `api.hyperliquid.xyz/info` + `ht-api.coinmarketman.com` | Top trader BTC positions |
+| `whale` | `api.hyperliquid.xyz/info` | Verified whale BTC positions |
 | `macro` | `economic-calendar.tradingview.com/events` | Economic releases with actual vs forecast |
 | `news` | CNBC, Yahoo Finance, CoinDesk, etc. | RSS headlines |
 
@@ -305,12 +305,19 @@ The flow agent analyzes Binance Futures market data for real-time order flow and
 
 ### Whale Agent - Copy Trading
 
-The whale agent tracks BTC positions of top performers on Hyperliquid and generates **position-size-weighted** signals:
+The whale agent tracks BTC positions of **verified top performers** on Hyperliquid and generates **position-size-weighted** signals:
 
-1. **Fetches top 10 traders** from [HyperTracker](https://hypertracker.io/) leaderboard (ranked by all-time PnL)
+1. **8 verified whale addresses** from public sources (Arkham, Lookonchain, OnchainDataNerd, leaderboards)
 2. **Queries each trader's BTC position** via Hyperliquid's free `clearinghouseState` API
 3. **Calculates weighted consensus** — weights by position size (BTC), not just count
 4. **Signals when 70%+ of weighted size agrees** — a 50 BTC position counts more than a 2 BTC position
+5. **Requires minimum 3 traders** with BTC positions to generate a signal
+
+**Verified whales include:**
+- `0x5b5d...` — #1 top earner, $143M+ profit, algorithmic trader
+- `0xb317...` — "BTC OG" whale, $500M positions, $150M+ profit
+- `0x2eA1...` — $282M ETH position whale (from Arkham)
+- And 5 more verified active traders
 
 | Positions | Weighted Consensus | Signal |
 |-----------|-------------------|--------|
@@ -320,16 +327,10 @@ The whale agent tracks BTC positions of top performers on Hyperliquid and genera
 
 **Sample output:**
 ```
-▲ [whale] LONG (75%): 6 long (80.5 BTC) vs 2 short (12.3 BTC) | weight: 87%/13% | PnL: +$125K
+▲ [whale] LONG (75%): 4 long (80.5 BTC) vs 2 short (12.3 BTC) | 87%/13% | PnL: +$125K
 ```
 
-**Rate limits:**
-- Leaderboard cached for 1 hour (1 request)
-- Position queries: 10 per cycle (one per trader)
-- Free tier: 100 requests/day — sufficient for hourly updates
-- Requires minimum 3 traders with BTC positions to generate signal
-
-**Optional:** Set `HYPERTRACKER_API_KEY` for higher rate limits.
+**Rate limits:** 8 requests per cycle (one per whale) — no API key required.
 
 ### News Agent - Sentiment Analysis
 
