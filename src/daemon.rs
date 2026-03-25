@@ -290,7 +290,7 @@ impl Daemon {
         Ok(())
     }
 
-    /// Check TP/SL and close if triggered
+    /// Check TP/SL and close if triggered (based on Net ROE after fees)
     async fn check_tp_sl(&self) -> bool {
         if self.config.mode != TradingMode::Live {
             return false;
@@ -301,12 +301,17 @@ impl Daemon {
             None => return false,
         };
 
-        // Check take profit
+        // Calculate Net ROE (after estimated fees)
+        let est_fees = (position.quantity * 2.8) as f64; // ~1.4 sats/USD for open + close
+        let net_pl = position.pl - est_fees;
+        let net_roe = if position.margin > 0.0 { (net_pl / position.margin) * 100.0 } else { 0.0 };
+
+        // Check take profit (based on net ROE)
         if let Some(tp_pct) = self.config.take_profit_pct {
-            if position.pl_pct >= tp_pct {
+            if net_roe >= tp_pct {
                 let reason = format!(
-                    "Take profit triggered ({:+.2}% >= +{:.1}%)",
-                    position.pl_pct, tp_pct
+                    "Take profit triggered (Net ROE {:+.2}% >= +{:.1}%)",
+                    net_roe, tp_pct
                 );
                 match self.close_cross_position(&reason).await {
                     Ok(_) => return true,
@@ -315,12 +320,12 @@ impl Daemon {
             }
         }
 
-        // Check stop loss
+        // Check stop loss (based on net ROE)
         if let Some(sl_pct) = self.config.stop_loss_pct {
-            if position.pl_pct <= -sl_pct {
+            if net_roe <= -sl_pct {
                 let reason = format!(
-                    "Stop loss triggered ({:+.2}% <= -{:.1}%)",
-                    position.pl_pct, sl_pct
+                    "Stop loss triggered (Net ROE {:+.2}% <= -{:.1}%)",
+                    net_roe, sl_pct
                 );
                 match self.close_cross_position(&reason).await {
                     Ok(_) => return true,
@@ -702,10 +707,7 @@ impl Daemon {
                 *last_reversal = Some(Utc::now());
             } else if pos.side == action.direction {
                 // Same direction - skip to avoid adding to position
-                println!(
-                    "  → Already {} - skipping (P&L: {:+.2}%)",
-                    pos.side, pos.pl_pct
-                );
+                println!("  → Already {} - skipping", pos.side);
                 return;
             }
         }
