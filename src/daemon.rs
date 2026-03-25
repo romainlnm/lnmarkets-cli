@@ -658,6 +658,16 @@ impl Daemon {
                 || (pos.side == Direction::Short && action.direction == Direction::Long);
 
             if is_reversal {
+                // Require extra confidence for reversals to cover double trading fees
+                let reversal_min_confidence = self.config.min_confidence + 0.10;
+                if action.confidence < reversal_min_confidence {
+                    println!(
+                        "  \x1b[33m→ REVERSAL BLOCKED: {:.0}% confidence < {:.0}% required (+10% fee premium)\x1b[0m",
+                        action.confidence * 100.0, reversal_min_confidence * 100.0
+                    );
+                    return;
+                }
+
                 // Check reversal cooldown
                 let last_reversal = self.last_reversal_time.read().await;
                 if let Some(last_time) = *last_reversal {
