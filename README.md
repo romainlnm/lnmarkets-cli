@@ -253,12 +253,13 @@ lnmarkets daemon --agents pattern,macro,news,flow --interval 60
 |-------|-------------|---------|
 | `pattern` | Binance Spot API | RSI, MACD, EMA crossover, Bollinger Bands |
 | `flow` | Binance Futures API | Taker volume, order book, funding rate, L/S ratio |
+| `whale` | Hyperliquid + HyperTracker | Copy top 5 BTC perp traders |
 | `macro` | TradingView API | Economic data surprises, event warnings |
 | `news` | RSS feeds | Sentiment analysis from crypto news |
 
 Default: `pattern,flow` — the two most reliable signal generators.
 
-All data sources are **public APIs** — no API keys required.
+All data sources are **public APIs** — no API keys required (HyperTracker free tier: 100 req/day).
 
 <details>
 <summary>Data source details</summary>
@@ -267,6 +268,7 @@ All data sources are **public APIs** — no API keys required.
 |-------|----------|------|
 | `pattern` | `api.binance.com/api/v3/klines` | BTC/USDT price candles |
 | `flow` | `fapi.binance.com/fapi/v1/*` | Depth, funding, OI, L/S ratio, taker volume |
+| `whale` | `api.hyperliquid.xyz/info` + `ht-api.coinmarketman.com` | Top trader BTC positions |
 | `macro` | `economic-calendar.tradingview.com/events` | Economic releases with actual vs forecast |
 | `news` | CNBC, Yahoo Finance, CoinDesk, etc. | RSS headlines |
 
@@ -300,6 +302,34 @@ The flow agent analyzes Binance Futures market data for real-time order flow and
 **Taker volume** is the strongest signal — it shows actual market orders hitting the book, not just passive liquidity.
 
 **Contrarian logic:** Extreme positioning often precedes reversals. When everyone is long, the market tends to drop.
+
+### Whale Agent - Copy Trading
+
+The whale agent tracks BTC positions of top performers on Hyperliquid and generates signals based on consensus:
+
+1. **Fetches top 5 traders** from [HyperTracker](https://hypertracker.io/) leaderboard (ranked by all-time PnL)
+2. **Queries each trader's BTC position** via Hyperliquid's free `clearinghouseState` API
+3. **Calculates consensus** — counts longs vs shorts among active positions
+4. **Signals when 70%+ agree** — needs 4/5 or 5/5 traders on same side
+
+| Consensus | Signal |
+|-----------|--------|
+| 5/5 long (100%) | LONG |
+| 4/5 long (80%) | LONG |
+| 3/5 long (60%) | NEUTRAL (below 70% threshold) |
+| 4/5 short (80%) | SHORT |
+
+**Sample output:**
+```
+▲ [whale] LONG (72%): 4/5 long, 1/5 short | 8.50 BTC vs 2.10 BTC | PnL: +$85K
+```
+
+**Rate limits:**
+- Leaderboard cached for 1 hour (1 request)
+- Position queries: 5 per cycle (one per trader)
+- Free tier: 100 requests/day — sufficient for hourly updates
+
+**Optional:** Set `HYPERTRACKER_API_KEY` for higher rate limits.
 
 ### News Agent - Sentiment Analysis
 
