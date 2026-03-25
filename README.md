@@ -409,7 +409,13 @@ The daemon automatically manages positions:
 
 ### Anti-Whipsaw Protections
 
-Rapid market news (geopolitical events, Fed announcements) can cause agents to flip-flop between LONG and SHORT signals. Two safeguards prevent excessive reversals:
+Rapid market news (geopolitical events, Fed announcements) can cause agents to flip-flop between LONG and SHORT signals. Three safeguards prevent excessive reversals:
+
+**Reversal Premium (+10% confidence):**
+- Reversals require 10% higher confidence than regular trades
+- If `--min-confidence 0.6`, reversals need 70% confidence
+- Accounts for double trading fees (close current + open opposite)
+- Example: 65% signal would open a new position, but won't reverse an existing one
 
 **Reversal Cooldown:**
 - After a position reversal, the daemon waits before allowing another reversal
@@ -427,10 +433,13 @@ Rapid market news (geopolitical events, Fed announcements) can cause agents to f
 **Why this matters:**
 ```
 [14:30:00] NEWS: "Trump announces Iran sanctions"
-  → news: SHORT 80%
+  → Confidence: 65% (min: 60%)
+  → REVERSAL BLOCKED: 65% < 70% required (+10% fee premium)
+[14:35:00] NEWS: "Iran threatens retaliation"
+  → Confidence: 80%
   → REVERSAL: LONG → SHORT
-[14:31:00] NEWS: "Iran signals de-escalation"
-  → news: LONG 75%
+[14:36:00] NEWS: "Iran signals de-escalation"
+  → Confidence: 75%
   → COOLDOWN: Reversal blocked (4m remaining)
 ```
 
