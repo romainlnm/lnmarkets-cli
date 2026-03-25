@@ -552,15 +552,16 @@ The trailing stop only activates once the position is profitable and the peak RO
 Starting LN Markets trading daemon...
   Mode: LIVE TRADING
   Interval: 60s
-  Min confidence: 70%
+  Min confidence: 80%
   Max position: $20 USD
   Leverage: 10x
-  Take profit: +5.0%
-  Stop loss: -3.0%
+  Take profit: +10.0%
+  Stop loss: -5.0%
+  Trailing stop: 3.0% from peak
   Agents: ["pattern", "flow", "news", "macro"]
 
 [14:30:00] Analyzing...
-  [POSITION] ▼ $10 @ $69500 | P&L: $2 (+4.50%)
+  [POSITION] ▼ $10 @ $69500 | Net ROE: +4.50% (TP: +10% / SL: -5%) | Trail: 3.0% from peak 4.8%
   ▲ [pattern] LONG (75%): BTC $69876 | RSI: 32.1 | EMA bullish crossover
   ▼ [flow] SHORT (60%): OB -45%↓ | FR -0.30bps | L/S 1.51
   ● [news] NEUTRAL (50%): 4 articles | 1B/2N/1b
