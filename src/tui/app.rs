@@ -451,9 +451,9 @@ impl App {
                     // Cross uses "deltaPl" for unrealized P&L
                     let pl = cross["deltaPl"].as_i64()
                         .or_else(|| cross["deltaPl"].as_f64().map(|v| v as i64));
-                    // Estimate opening fee for current position (~1.4 sats per USD)
+                    // Estimate opening fee: 0.1% of margin
                     // Note: tradingFees/fundingFees from API are cumulative for ALL orders, not position-specific
-                    let estimated_fee = (quantity.abs() * 1.4) as i64;
+                    let estimated_fee = margin.map(|m| (m as f64 * 0.001) as i64).unwrap_or(0);
                     let opening_fee = Some(estimated_fee);
                     // Don't show funding fees for cross - they're account-level, not position-specific
                     let sum_carry_fees = None;

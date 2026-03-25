@@ -302,7 +302,8 @@ impl Daemon {
         };
 
         // Calculate Net ROE (after estimated fees)
-        let est_fees = (position.quantity * 2.8) as f64; // ~1.4 sats/USD for open + close
+        // Fee = 0.1% of margin for open + 0.1% for close = 0.2% total
+        let est_fees = position.margin * 0.002;
         let net_pl = position.pl - est_fees;
         let net_roe = if position.margin > 0.0 { (net_pl / position.margin) * 100.0 } else { 0.0 };
 
@@ -388,8 +389,8 @@ impl Daemon {
             if self.config.mode == TradingMode::Live {
                 if let Some(pos) = self.get_cross_position().await {
                     let side_icon = if pos.side == Direction::Long { "▲" } else { "▼" };
-                    // Estimate fees: ~1.4 sats/USD for opening + closing
-                    let est_fees = (pos.quantity * 2.8) as i64;
+                    // Estimate fees: 0.1% of margin for open + 0.1% for close = 0.2% total
+                    let est_fees = (pos.margin * 0.002) as i64;
                     let net_pl = pos.pl as i64 - est_fees;
                     // Net ROE = net P&L / margin
                     let net_roe = if pos.margin > 0.0 { (net_pl as f64 / pos.margin) * 100.0 } else { 0.0 };
