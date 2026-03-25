@@ -2,6 +2,16 @@ use super::app::App;
 use super::popup::{ConfirmAction, FormAction, Notification, Popup};
 use reqwest::Method;
 
+/// Convert price to JSON value - integer if whole number, float otherwise.
+/// This matters for HMAC signature: `72000` vs `72000.0` produce different signatures.
+fn price_to_json(p: f64) -> serde_json::Value {
+    if p.fract() == 0.0 {
+        serde_json::Value::Number((p as i64).into())
+    } else {
+        serde_json::json!(p)
+    }
+}
+
 impl App {
     pub async fn execute_confirm(&mut self, action: ConfirmAction) {
         match action {
@@ -241,7 +251,7 @@ impl App {
             .request::<serde_json::Value, _>(
                 Method::PUT,
                 "futures/isolated/trade/stoploss",
-                Some(&{let mut m=serde_json::Map::new();m.insert("id".into(),serde_json::json!(id));m.insert("value".into(),if p.fract()==0.0{serde_json::Value::Number((p as i64).into())}else{serde_json::json!(p)});serde_json::Value::Object(m)}),
+                Some(&serde_json::json!({"id": id, "value": price_to_json(p)})),
             )
             .await
         {
@@ -262,7 +272,7 @@ impl App {
             .request::<serde_json::Value, _>(
                 Method::PUT,
                 "futures/isolated/trade/takeprofit",
-                Some(&{let mut m=serde_json::Map::new();m.insert("id".into(),serde_json::json!(id));m.insert("value".into(),if p.fract()==0.0{serde_json::Value::Number((p as i64).into())}else{serde_json::json!(p)});serde_json::Value::Object(m)}),
+                Some(&serde_json::json!({"id": id, "value": price_to_json(p)})),
             )
             .await
         {
