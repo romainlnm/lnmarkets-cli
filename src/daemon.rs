@@ -383,10 +383,12 @@ impl Daemon {
                     // Estimate fees: ~1.4 sats/USD for opening + closing
                     let est_fees = (pos.quantity * 2.8) as i64;
                     let net_pl = pos.pl as i64 - est_fees;
-                    let net_pl_color = if net_pl >= 0 { "\x1b[32m" } else { "\x1b[31m" };
+                    let roe_color = if pos.pl_pct >= 0.0 { "\x1b[32m" } else { "\x1b[31m" };
+                    let tp = self.config.take_profit_pct.unwrap_or(5.0);
+                    let sl = self.config.stop_loss_pct.unwrap_or(3.0);
                     println!(
-                        "  \x1b[36m[POSITION]\x1b[0m {} ${:.0} @ ${:.0} | Net P&L: {}{:+} sats\x1b[0m (fees: ~{} sats)",
-                        side_icon, pos.quantity, pos.entry_price, net_pl_color, net_pl, est_fees
+                        "  \x1b[36m[POSITION]\x1b[0m {} ${:.0} @ ${:.0} | ROE: {}{:+.2}%\x1b[0m (TP: +{:.0}% / SL: -{:.0}%) | Net P&L: {:+} sats (fees: ~{} sats)",
+                        side_icon, pos.quantity, pos.entry_price, roe_color, pos.pl_pct, tp, sl, net_pl, est_fees
                     );
                 }
 
