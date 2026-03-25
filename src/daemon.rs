@@ -55,11 +55,11 @@ impl Default for DaemonConfig {
         Self {
             interval_secs: 60,
             mode: TradingMode::DryRun,
-            min_confidence: 0.7,
+            min_confidence: 0.8,
             max_position_usd: 10,
             leverage: 10,
-            take_profit_pct: Some(5.0),
-            stop_loss_pct: Some(3.0),
+            take_profit_pct: Some(10.0),
+            stop_loss_pct: Some(5.0),
             agents: vec!["pattern".to_string()],
             reversal_cooldown_secs: 300, // 5 minutes default
             conflict_threshold: 0.3,     // Skip if agents disagree by >30%
