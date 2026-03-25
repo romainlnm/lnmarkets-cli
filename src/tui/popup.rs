@@ -337,6 +337,8 @@ impl Popup {
         pl: Option<i64>,
         sl: Option<f64>,
         tp: Option<f64>,
+        opening_fee: Option<i64>,
+        sum_carry_fees: Option<i64>,
     ) -> Self {
         let mut l = vec![
             ("ID".into(), id.into()),
@@ -355,6 +357,14 @@ impl Popup {
                 "P&L".into(),
                 format!("{}{} sats", if p >= 0 { "+" } else { "" }, p),
             ));
+            // Margin ratio: how much of margin is consumed by unrealized loss
+            if let Some(m) = margin {
+                if m > 0 {
+                    let ratio = (p.abs() as f64 / m as f64) * 100.0;
+                    let warn = if p < 0 && ratio > 80.0 { " ⚠" } else { "" };
+                    l.push(("Margin Ratio".into(), format!("{:.1}%{}", ratio, warn)));
+                }
+            }
         }
         if let Some(s) = sl {
             if s > 0.0 {
@@ -364,6 +374,17 @@ impl Popup {
         if let Some(t) = tp {
             if t > 0.0 {
                 l.push(("TP".into(), format!("${:.0}", t)));
+            }
+        }
+        // Fees section
+        if let Some(fee) = opening_fee {
+            l.push(("Opening Fee".into(), format!("{} sats", fee)));
+            // Estimate closing fee as same as opening (approximation)
+            l.push(("Est. Closing Fee".into(), format!("~{} sats", fee)));
+        }
+        if let Some(carry) = sum_carry_fees {
+            if carry != 0 {
+                l.push(("Carry Fees".into(), format!("{} sats", carry)));
             }
         }
         Popup::Detail {

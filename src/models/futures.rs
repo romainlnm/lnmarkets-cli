@@ -88,6 +88,12 @@ pub struct Trade {
     pub last_update: Option<String>,
     #[serde(default)]
     pub margin_type: MarginType,
+    /// Opening fee in sats (returned when trade is created)
+    #[serde(rename = "openingFee", default)]
+    pub opening_fee: Option<i64>,
+    /// Cumulative carry/funding fees in sats
+    #[serde(rename = "sumCarryFees", default)]
+    pub sum_carry_fees: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

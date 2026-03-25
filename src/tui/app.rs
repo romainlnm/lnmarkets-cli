@@ -244,6 +244,8 @@ impl App {
                         p.pl,
                         p.stop_loss,
                         p.take_profit,
+                        p.opening_fee,
+                        p.sum_carry_fees,
                     ));
                 }
             }
@@ -466,6 +468,8 @@ impl App {
                         closed_at: None,
                         last_update: None,
                         margin_type: MarginType::Cross,
+                        opening_fee: cross["openingFee"].as_i64(),
+                        sum_carry_fees: cross["sumCarryFees"].as_i64(),
                     };
                     positions.insert(0, cross_trade); // Cross position first
                 }

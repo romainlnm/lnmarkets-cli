@@ -137,6 +137,12 @@ pub struct Trade {
     pub liquidation_price: Option<f64>,
     #[serde(rename = "createdAt")]
     pub created_at: Option<String>,
+    /// Opening fee in sats
+    #[serde(rename = "openingFee", default)]
+    pub opening_fee: Option<i64>,
+    /// Cumulative carry/funding fees in sats
+    #[serde(rename = "sumCarryFees", default)]
+    pub sum_carry_fees: Option<i64>,
 }
 
 #[derive(Debug, Tabled, Serialize)]
