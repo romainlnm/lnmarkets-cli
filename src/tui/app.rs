@@ -435,7 +435,7 @@ impl App {
             {
                 positions.extend(t);
             }
-            // Fetch cross margin position
+            // Fetch cross margin position (aggregate)
             if let Ok(cross) = c
                 .request::<serde_json::Value, ()>(Method::GET, "futures/cross/position", None)
                 .await
@@ -444,9 +444,21 @@ impl App {
                 if quantity != 0.0 {
                     let side = if quantity > 0.0 { "buy" } else { "sell" };
                     let entry_price = cross["entryPrice"].as_f64();
-                    let margin = cross["margin"].as_i64();
+                    // Cross API uses different field names than isolated
+                    let margin = cross["margin"].as_i64()
+                        .or_else(|| cross["margin"].as_f64().map(|v| v as i64));
                     let leverage = cross["leverage"].as_f64().unwrap_or(1.0);
-                    let pl = cross["pl"].as_i64();
+                    // Cross uses "deltaPl" for unrealized P&L
+                    let pl = cross["deltaPl"].as_i64()
+                        .or_else(|| cross["deltaPl"].as_f64().map(|v| v as i64));
+                    // Estimate opening fee for current position (~1.4 sats per USD)
+                    // Note: tradingFees/fundingFees from API are cumulative for ALL orders, not position-specific
+                    let estimated_fee = (quantity.abs() * 1.4) as i64;
+                    let opening_fee = Some(estimated_fee);
+                    // Don't show funding fees for cross - they're account-level, not position-specific
+                    let sum_carry_fees = None;
+                    // Cross uses "liquidation" not "liquidationPrice"
+                    let liquidation = cross["liquidation"].as_f64();
                     let cross_trade = Trade {
                         id: "cross".to_string(),
                         user_id: None,
@@ -462,14 +474,14 @@ impl App {
                         margin,
                         margin_with_cf: None,
                         pl,
-                        liquidation_price: cross["liquidationPrice"].as_f64(),
+                        liquidation_price: liquidation,
                         created_at: None,
                         open_at: None,
                         closed_at: None,
                         last_update: None,
                         margin_type: MarginType::Cross,
-                        opening_fee: cross["openingFee"].as_i64(),
-                        sum_carry_fees: cross["sumCarryFees"].as_i64(),
+                        opening_fee,
+                        sum_carry_fees,
                     };
                     positions.insert(0, cross_trade); // Cross position first
                 }

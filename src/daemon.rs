@@ -380,10 +380,13 @@ impl Daemon {
             if self.config.mode == TradingMode::Live {
                 if let Some(pos) = self.get_cross_position().await {
                     let side_icon = if pos.side == Direction::Long { "▲" } else { "▼" };
-                    let pl_color = if pos.pl >= 0.0 { "\x1b[32m" } else { "\x1b[31m" };
+                    // Estimate fees: ~1.4 sats/USD for opening + closing
+                    let est_fees = (pos.quantity * 2.8) as i64;
+                    let net_pl = pos.pl as i64 - est_fees;
+                    let net_pl_color = if net_pl >= 0 { "\x1b[32m" } else { "\x1b[31m" };
                     println!(
-                        "  \x1b[36m[POSITION]\x1b[0m {} ${:.0} @ ${:.0} | P&L: {}{:+.0} sats ({:+.2}%)\x1b[0m",
-                        side_icon, pos.quantity, pos.entry_price, pl_color, pos.pl, pos.pl_pct
+                        "  \x1b[36m[POSITION]\x1b[0m {} ${:.0} @ ${:.0} | Net P&L: {}{:+} sats\x1b[0m (fees: ~{} sats)",
+                        side_icon, pos.quantity, pos.entry_price, net_pl_color, net_pl, est_fees
                     );
                 }
 
