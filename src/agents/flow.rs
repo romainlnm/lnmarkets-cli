@@ -5,7 +5,7 @@
 //! - Funding rate (long/short sentiment)
 //! - Open Interest changes
 //! - Long/Short ratio
-//! - Recent liquidations
+//! - Taker buy/sell volume ratio
 
 use super::{Agent, Direction, Signal};
 use anyhow::{Context, Result};
@@ -23,6 +23,11 @@ pub struct FlowConfig {
     pub funding_threshold_bps: f64,
     /// OI change threshold for signal (percentage)
     pub oi_change_threshold_pct: f64,
+    /// Order book imbalance threshold (0-1)
+    pub ob_imbalance_threshold: f64,
+    /// Long/Short ratio thresholds for contrarian signals
+    pub ls_ratio_high: f64,
+    pub ls_ratio_low: f64,
 }
 
 impl Default for FlowConfig {
@@ -30,8 +35,11 @@ impl Default for FlowConfig {
         Self {
             symbol: "BTCUSDT".to_string(),
             depth_levels: 20,
-            funding_threshold_bps: 10.0, // 0.01%
-            oi_change_threshold_pct: 5.0,
+            funding_threshold_bps: 5.0,  // 0.005% - more sensitive
+            oi_change_threshold_pct: 3.0, // 3% - more sensitive
+            ob_imbalance_threshold: 0.15, // 15% imbalance
+            ls_ratio_high: 1.3,  // Crowded long threshold
+            ls_ratio_low: 0.77,  // Crowded short threshold
         }
     }
 }
@@ -168,68 +176,120 @@ impl FlowAgent {
         })
     }
 
+    /// Fetch taker buy/sell volume ratio (last 5 minutes)
+    async fn fetch_taker_volume(&self) -> Result<TakerVolumeData> {
+        let url = format!(
+            "https://fapi.binance.com/futures/data/takerlongshortRatio?symbol={}&period=5m&limit=1",
+            self.config.symbol
+        );
+
+        let response: Vec<BinanceTakerRatio> = self.http_client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch taker volume")?
+            .json()
+            .await
+            .context("Failed to parse taker volume")?;
+
+        let data = response.first();
+
+        Ok(TakerVolumeData {
+            buy_ratio: data.and_then(|d| d.buy_vol.parse::<f64>().ok()).unwrap_or(0.5),
+            sell_ratio: data.and_then(|d| d.sell_vol.parse::<f64>().ok()).unwrap_or(0.5),
+            ratio: data.and_then(|d| d.buy_sell_ratio.parse::<f64>().ok()).unwrap_or(1.0),
+        })
+    }
+
     /// Analyze all flow data and produce signal
     fn analyze_flow(
         &self,
         order_book: &OrderBookData,
         funding: &FundingData,
-        oi: &OpenInterestData,
+        _oi: &OpenInterestData,
         long_short: &LongShortData,
+        taker: &TakerVolumeData,
         oi_change_pct: f64,
     ) -> Signal {
-        let mut bullish_signals: Vec<&str> = Vec::new();
-        let mut bearish_signals: Vec<&str> = Vec::new();
+        // Weighted signals: (direction, weight, reason)
+        let mut signals: Vec<(Direction, f64, &str)> = Vec::new();
 
-        // Order book imbalance
-        if order_book.imbalance > 0.2 {
-            bullish_signals.push("bid imbalance");
-        } else if order_book.imbalance < -0.2 {
-            bearish_signals.push("ask imbalance");
+        // Order book imbalance (weight: 1.0)
+        if order_book.imbalance > self.config.ob_imbalance_threshold {
+            signals.push((Direction::Long, 1.0, "bid imbalance"));
+        } else if order_book.imbalance < -self.config.ob_imbalance_threshold {
+            signals.push((Direction::Short, 1.0, "ask imbalance"));
         }
 
-        // Funding rate (negative = shorts pay longs = bullish)
+        // Taker buy/sell volume (weight: 1.5 - strong real-time signal)
+        if taker.ratio > 1.15 {
+            signals.push((Direction::Long, 1.5, "taker buying"));
+        } else if taker.ratio < 0.87 {
+            signals.push((Direction::Short, 1.5, "taker selling"));
+        }
+
+        // Funding rate (weight: 1.2 - negative = shorts pay longs = bullish)
         if funding.rate_bps < -self.config.funding_threshold_bps {
-            bullish_signals.push("negative funding");
+            signals.push((Direction::Long, 1.2, "negative funding"));
         } else if funding.rate_bps > self.config.funding_threshold_bps {
-            bearish_signals.push("high funding");
+            signals.push((Direction::Short, 1.2, "high funding"));
         }
 
-        // Long/Short ratio (contrarian: too many longs = bearish)
-        if long_short.ratio > 1.5 {
-            bearish_signals.push("crowded long");
-        } else if long_short.ratio < 0.7 {
-            bullish_signals.push("crowded short");
+        // Long/Short ratio - contrarian (weight: 1.3)
+        if long_short.ratio > self.config.ls_ratio_high {
+            signals.push((Direction::Short, 1.3, "crowded long"));
+        } else if long_short.ratio < self.config.ls_ratio_low {
+            signals.push((Direction::Long, 1.3, "crowded short"));
         }
 
-        // OI change (rising OI with direction = confirmation)
-        let oi_rising = oi_change_pct > self.config.oi_change_threshold_pct;
-        let oi_falling = oi_change_pct < -self.config.oi_change_threshold_pct;
+        // OI change confirmation (weight: 0.8 - supporting indicator)
+        if oi_change_pct > self.config.oi_change_threshold_pct {
+            // Rising OI = new positions entering, confirms trend
+            signals.push((Direction::Long, 0.8, "OI rising"));
+        } else if oi_change_pct < -self.config.oi_change_threshold_pct {
+            // Falling OI = positions closing, potential reversal
+            signals.push((Direction::Short, 0.8, "OI falling"));
+        }
 
         // Build status line
         let status = format!(
-            "OB {:.0}%{} | FR {:.2}bps | L/S {:.2} | OI {}{:.1}%",
+            "OB {:.0}%{} | Tkr {:.2} | FR {:.1}bp | L/S {:.2}",
             order_book.imbalance * 100.0,
             if order_book.imbalance > 0.0 { "↑" } else { "↓" },
+            taker.ratio,
             funding.rate_bps,
             long_short.ratio,
-            if oi_change_pct >= 0.0 { "+" } else { "" },
-            oi_change_pct,
         );
 
-        // Determine direction
-        let bullish_score = bullish_signals.len() as f64;
-        let bearish_score = bearish_signals.len() as f64;
+        // Calculate weighted scores
+        let long_weighted: f64 = signals
+            .iter()
+            .filter(|(d, _, _)| *d == Direction::Long)
+            .map(|(_, w, _)| w)
+            .sum();
+        let short_weighted: f64 = signals
+            .iter()
+            .filter(|(d, _, _)| *d == Direction::Short)
+            .map(|(_, w, _)| w)
+            .sum();
 
-        if bullish_score >= 2.0 && bullish_score > bearish_score {
-            let confidence = 0.5 + (bullish_score / 6.0).min(0.35);
-            let reasoning = format!("{} | {}", status, bullish_signals.join(", "));
+        let total_weight = long_weighted + short_weighted;
+        if total_weight < 1.5 {
+            return Signal::neutral("flow", &format!("{} | weak signals", status));
+        }
+
+        let reasons: Vec<&str> = signals.iter().map(|(_, _, r)| *r).collect();
+        let reasoning = format!("{} | {}", status, reasons.join(", "));
+
+        // Confidence based on signal agreement
+        if long_weighted > short_weighted {
+            let confidence = 0.45 + (long_weighted / 8.0).min(0.45);
             Signal::new(Direction::Long, confidence, "flow", &reasoning)
-        } else if bearish_score >= 2.0 && bearish_score > bullish_score {
-            let confidence = 0.5 + (bearish_score / 6.0).min(0.35);
-            let reasoning = format!("{} | {}", status, bearish_signals.join(", "));
+        } else if short_weighted > long_weighted {
+            let confidence = 0.45 + (short_weighted / 8.0).min(0.45);
             Signal::new(Direction::Short, confidence, "flow", &reasoning)
         } else {
-            Signal::neutral("flow", &status)
+            Signal::neutral("flow", &format!("{} | conflicting", status))
         }
     }
 }
@@ -242,11 +302,12 @@ impl Agent for FlowAgent {
 
     async fn analyze(&self) -> Result<Signal> {
         // Fetch all data in parallel
-        let (order_book, funding, oi, long_short) = tokio::try_join!(
+        let (order_book, funding, oi, long_short, taker) = tokio::try_join!(
             self.fetch_order_book(),
             self.fetch_funding_rate(),
             self.fetch_open_interest(),
             self.fetch_long_short_ratio(),
+            self.fetch_taker_volume(),
         )?;
 
         // Calculate OI change (compared to last reading)
@@ -263,7 +324,7 @@ impl Agent for FlowAgent {
         // Note: In a real implementation, we'd update last_oi here
         // but we can't mutate self in analyze(). Would need interior mutability.
 
-        Ok(self.analyze_flow(&order_book, &funding, &oi, &long_short, oi_change_pct))
+        Ok(self.analyze_flow(&order_book, &funding, &oi, &long_short, &taker, oi_change_pct))
     }
 }
 
@@ -294,6 +355,13 @@ struct LongShortData {
     ratio: f64, // long/short
 }
 
+#[derive(Debug)]
+struct TakerVolumeData {
+    buy_ratio: f64,
+    sell_ratio: f64,
+    ratio: f64, // buy/sell
+}
+
 // Binance API responses
 
 #[derive(Debug, Deserialize)]
@@ -320,6 +388,14 @@ struct BinanceLongShort {
     long_account: String,
     short_account: String,
     long_short_ratio: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BinanceTakerRatio {
+    buy_vol: String,
+    sell_vol: String,
+    buy_sell_ratio: String,
 }
 
 #[cfg(test)]

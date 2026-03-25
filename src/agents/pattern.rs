@@ -3,6 +3,7 @@
 //! Analyzes price data using technical indicators:
 //! - RSI (Relative Strength Index)
 //! - EMA crossover (9/21)
+//! - MACD (12/26/9)
 //! - Bollinger Bands
 
 use super::{Agent, Direction, Signal};
@@ -25,6 +26,12 @@ pub struct PatternConfig {
     pub ema_fast: usize,
     /// Slow EMA period (default: 21)
     pub ema_slow: usize,
+    /// MACD fast period (default: 12)
+    pub macd_fast: usize,
+    /// MACD slow period (default: 26)
+    pub macd_slow: usize,
+    /// MACD signal period (default: 9)
+    pub macd_signal: usize,
     /// Bollinger Bands period (default: 20)
     pub bb_period: usize,
     /// Bollinger Bands std dev multiplier (default: 2.0)
@@ -43,6 +50,9 @@ impl Default for PatternConfig {
             rsi_oversold: 30.0,
             ema_fast: 9,
             ema_slow: 21,
+            macd_fast: 12,
+            macd_slow: 26,
+            macd_signal: 9,
             bb_period: 20,
             bb_std_dev: 2.0,
             interval_secs: 60,
@@ -186,6 +196,46 @@ impl PatternAgent {
         Some((lower, sma, upper))
     }
 
+    /// Calculate MACD (returns macd_line, signal_line, histogram)
+    fn calculate_macd(prices: &[f64], fast: usize, slow: usize, signal: usize) -> Option<(f64, f64, f64)> {
+        if prices.len() < slow + signal {
+            return None;
+        }
+
+        let ema_fast = Self::calculate_ema(prices, fast)?;
+        let ema_slow = Self::calculate_ema(prices, slow)?;
+        let macd_line = ema_fast - ema_slow;
+
+        // Calculate signal line (EMA of MACD values)
+        // We need to compute MACD for several periods to get signal line
+        let mut macd_values = Vec::with_capacity(signal + 5);
+        for i in (0..signal + 5).rev() {
+            if prices.len() > slow + i {
+                let slice = &prices[..prices.len() - i];
+                if let (Some(f), Some(s)) = (
+                    Self::calculate_ema(slice, fast),
+                    Self::calculate_ema(slice, slow),
+                ) {
+                    macd_values.push(f - s);
+                }
+            }
+        }
+
+        if macd_values.len() < signal {
+            return Some((macd_line, macd_line, 0.0)); // Not enough data for signal
+        }
+
+        // Simple EMA of MACD values for signal line
+        let multiplier = 2.0 / (signal as f64 + 1.0);
+        let mut signal_line = macd_values[0..signal].iter().sum::<f64>() / signal as f64;
+        for val in macd_values.iter().skip(signal) {
+            signal_line = (val - signal_line) * multiplier + signal_line;
+        }
+
+        let histogram = macd_line - signal_line;
+        Some((macd_line, signal_line, histogram))
+    }
+
     /// Analyze indicators and produce signal
     fn analyze_indicators(&self, prices: &[f64]) -> Signal {
         let current_price = *prices.last().unwrap_or(&0.0);
@@ -195,80 +245,112 @@ impl PatternAgent {
         let ema_fast = Self::calculate_ema(prices, self.config.ema_fast);
         let ema_slow = Self::calculate_ema(prices, self.config.ema_slow);
         let bollinger = Self::calculate_bollinger(prices, self.config.bb_period, self.config.bb_std_dev);
+        let macd = Self::calculate_macd(prices, self.config.macd_fast, self.config.macd_slow, self.config.macd_signal);
 
-        let mut signals: Vec<(Direction, f64, &str)> = Vec::new();
+        // Weighted signals: (direction, weight, confidence, reason)
+        // Weight represents importance: RSI=1.5, MACD=1.3, EMA=1.0, BB=0.8
+        let mut signals: Vec<(Direction, f64, f64, &str)> = Vec::new();
 
-        // RSI signal
+        // RSI signal (weight: 1.5 - strong mean reversion indicator)
         if let Some(rsi_val) = rsi {
             if rsi_val >= self.config.rsi_overbought {
                 let strength = (rsi_val - self.config.rsi_overbought) / (100.0 - self.config.rsi_overbought);
-                signals.push((Direction::Short, 0.5 + strength * 0.3, "RSI overbought"));
+                signals.push((Direction::Short, 1.5, 0.5 + strength * 0.35, "RSI overbought"));
             } else if rsi_val <= self.config.rsi_oversold {
                 let strength = (self.config.rsi_oversold - rsi_val) / self.config.rsi_oversold;
-                signals.push((Direction::Long, 0.5 + strength * 0.3, "RSI oversold"));
+                signals.push((Direction::Long, 1.5, 0.5 + strength * 0.35, "RSI oversold"));
             }
         }
 
-        // EMA crossover signal
+        // MACD signal (weight: 1.3 - good trend/momentum indicator)
+        if let Some((macd_line, signal_line, histogram)) = macd {
+            // MACD crossover
+            if macd_line > signal_line && histogram > 0.0 {
+                let strength = (histogram.abs() / current_price * 10000.0).min(1.0); // Normalize
+                signals.push((Direction::Long, 1.3, 0.5 + strength * 0.3, "MACD bullish"));
+            } else if macd_line < signal_line && histogram < 0.0 {
+                let strength = (histogram.abs() / current_price * 10000.0).min(1.0);
+                signals.push((Direction::Short, 1.3, 0.5 + strength * 0.3, "MACD bearish"));
+            }
+        }
+
+        // EMA crossover signal (weight: 1.0 - trend confirmation)
         if let (Some(fast), Some(slow)) = (ema_fast, ema_slow) {
             let diff_pct = (fast - slow) / slow * 100.0;
-            if diff_pct > 0.1 {
-                signals.push((Direction::Long, 0.5 + (diff_pct / 2.0).min(0.3), "EMA bullish crossover"));
-            } else if diff_pct < -0.1 {
-                signals.push((Direction::Short, 0.5 + (diff_pct.abs() / 2.0).min(0.3), "EMA bearish crossover"));
+            if diff_pct > 0.05 {
+                signals.push((Direction::Long, 1.0, 0.5 + (diff_pct / 2.0).min(0.3), "EMA bullish"));
+            } else if diff_pct < -0.05 {
+                signals.push((Direction::Short, 1.0, 0.5 + (diff_pct.abs() / 2.0).min(0.3), "EMA bearish"));
             }
         }
 
-        // Bollinger Bands signal
+        // Bollinger Bands signal (weight: 0.8 - volatility/reversal)
         if let Some((lower, _mid, upper)) = bollinger {
             if current_price <= lower {
                 let penetration = (lower - current_price) / lower * 100.0;
-                signals.push((Direction::Long, 0.6 + (penetration / 5.0).min(0.2), "Price at lower BB"));
+                signals.push((Direction::Long, 0.8, 0.55 + (penetration / 5.0).min(0.25), "BB lower touch"));
             } else if current_price >= upper {
                 let penetration = (current_price - upper) / upper * 100.0;
-                signals.push((Direction::Short, 0.6 + (penetration / 5.0).min(0.2), "Price at upper BB"));
+                signals.push((Direction::Short, 0.8, 0.55 + (penetration / 5.0).min(0.25), "BB upper touch"));
             }
         }
 
-        // Build status line even for neutral
+        // Build status line
+        let macd_str = macd.map(|(_, _, h)| format!("{:.0}", h)).unwrap_or("-".into());
         let status = format!(
-            "BTC ${:.0} | RSI {:.1} | EMA9 {:.0} EMA21 {:.0}",
+            "BTC ${:.0} | RSI {:.1} | MACD {} | EMA {:.0}/{:.0}",
             current_price,
             rsi.unwrap_or(50.0),
+            macd_str,
             ema_fast.unwrap_or(0.0),
             ema_slow.unwrap_or(0.0),
         );
 
-        // Combine signals
+        // Combine signals with weighted voting
         if signals.is_empty() {
-            return Signal::neutral("pattern", &format!("{} | No strong signals", status));
+            return Signal::neutral("pattern", &format!("{} | No signals", status));
         }
 
-        let long_score: f64 = signals
+        let long_weighted: f64 = signals
             .iter()
-            .filter(|(d, _, _)| *d == Direction::Long)
-            .map(|(_, c, _)| c)
+            .filter(|(d, _, _, _)| *d == Direction::Long)
+            .map(|(_, w, c, _)| w * c)
             .sum();
-        let short_score: f64 = signals
+        let short_weighted: f64 = signals
             .iter()
-            .filter(|(d, _, _)| *d == Direction::Short)
-            .map(|(_, c, _)| c)
+            .filter(|(d, _, _, _)| *d == Direction::Short)
+            .map(|(_, w, c, _)| w * c)
             .sum();
 
-        let reasons: Vec<&str> = signals.iter().map(|(_, _, r)| *r).collect();
-        let reasoning = format!(
-            "BTC ${:.0} | RSI: {:.1} | EMA9: {:.0} EMA21: {:.0} | {}",
-            current_price,
-            rsi.unwrap_or(50.0),
-            ema_fast.unwrap_or(0.0),
-            ema_slow.unwrap_or(0.0),
-            reasons.join(", ")
-        );
+        let long_weight_total: f64 = signals
+            .iter()
+            .filter(|(d, _, _, _)| *d == Direction::Long)
+            .map(|(_, w, _, _)| w)
+            .sum();
+        let short_weight_total: f64 = signals
+            .iter()
+            .filter(|(d, _, _, _)| *d == Direction::Short)
+            .map(|(_, w, _, _)| w)
+            .sum();
 
-        if long_score > short_score && long_score > 0.5 {
-            Signal::new(Direction::Long, (long_score / signals.len() as f64).min(0.9), "pattern", &reasoning)
-        } else if short_score > long_score && short_score > 0.5 {
-            Signal::new(Direction::Short, (short_score / signals.len() as f64).min(0.9), "pattern", &reasoning)
+        let reasons: Vec<&str> = signals.iter().map(|(_, _, _, r)| *r).collect();
+        let reasoning = format!("{} | {}", status, reasons.join(", "));
+
+        // Calculate final confidence as weighted average
+        if long_weighted > short_weighted && long_weight_total > 0.0 {
+            let confidence = (long_weighted / long_weight_total).min(0.9);
+            if confidence >= 0.5 {
+                Signal::new(Direction::Long, confidence, "pattern", &reasoning)
+            } else {
+                Signal::neutral("pattern", &reasoning)
+            }
+        } else if short_weighted > long_weighted && short_weight_total > 0.0 {
+            let confidence = (short_weighted / short_weight_total).min(0.9);
+            if confidence >= 0.5 {
+                Signal::new(Direction::Short, confidence, "pattern", &reasoning)
+            } else {
+                Signal::neutral("pattern", &reasoning)
+            }
         } else {
             Signal::neutral("pattern", &reasoning)
         }

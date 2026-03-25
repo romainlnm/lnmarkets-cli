@@ -116,7 +116,7 @@ pub struct DaemonArgs {
     pub stop_loss: f64,
 
     /// Agents to enable (comma-separated: pattern,macro,news,flow)
-    #[arg(short, long, value_delimiter = ',', default_value = "pattern")]
+    #[arg(short, long, value_delimiter = ',', default_value = "pattern,flow")]
     pub agents: Vec<String>,
 
     /// Reversal cooldown in seconds (prevents rapid flip-flopping)
