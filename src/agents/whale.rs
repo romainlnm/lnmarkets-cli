@@ -28,10 +28,10 @@ pub struct WhaleConfig {
 impl Default for WhaleConfig {
     fn default() -> Self {
         Self {
-            top_n: 10,
+            top_n: 5,
             hypertracker_api_key: std::env::var("HYPERTRACKER_API_KEY").ok(),
             leaderboard_refresh_secs: 3600, // Refresh leaderboard hourly
-            min_consensus: 0.6, // 60% agreement needed
+            min_consensus: 0.7, // 70% agreement needed (4/5 or 5/5)
         }
     }
 }
@@ -131,7 +131,7 @@ impl WhaleAgent {
 
     /// Fallback list of known top traders (updated periodically)
     fn fallback_traders(&self) -> Vec<TopTrader> {
-        // These are well-known Hyperliquid whales - update periodically
+        // Top 5 Hyperliquid BTC perp whales - update periodically
         vec![
             TopTrader { address: "0xecb63caa47c7c4e77f60f1ce858cf28dc2b82b00".to_string(), pnl_all_time: 180_000_000.0 },
             TopTrader { address: "0x5e8f83c954fb80f7dc236e80269c335eb59bce9a".to_string(), pnl_all_time: 50_000_000.0 },
