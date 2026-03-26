@@ -110,6 +110,40 @@ pub enum FuturesCommands {
 
     /// Close all running trades
     CloseAll,
+
+    /// Show cross-margin position
+    Cross,
+}
+
+// Cross-margin position response
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CrossPosition {
+    pub quantity: Option<f64>,
+    pub margin: Option<f64>,
+    pub leverage: Option<f64>,
+    #[serde(rename = "entryPrice")]
+    pub entry_price: Option<f64>,
+    #[serde(rename = "liquidationPrice")]
+    pub liquidation_price: Option<f64>,
+    pub pl: Option<f64>,
+}
+
+#[derive(Debug, Tabled, Serialize)]
+pub struct CrossPositionRow {
+    #[tabled(rename = "Side")]
+    pub side: String,
+    #[tabled(rename = "Quantity")]
+    pub quantity: String,
+    #[tabled(rename = "Leverage")]
+    pub leverage: String,
+    #[tabled(rename = "Entry")]
+    pub entry_price: String,
+    #[tabled(rename = "Liquidation")]
+    pub liquidation_price: String,
+    #[tabled(rename = "Margin")]
+    pub margin: String,
+    #[tabled(rename = "P/L")]
+    pub pl: String,
 }
 
 // v3 API trade response structure
@@ -447,6 +481,43 @@ impl FuturesCommands {
                         if !errors.is_empty() {
                             eprintln!("Errors: {}", errors.join(", "));
                         }
+                    }
+                }
+            }
+
+            Self::Cross => {
+                let position: CrossPosition = client
+                    .request(Method::GET, "futures/cross/position", None::<&()>)
+                    .await?;
+
+                let quantity = position.quantity.unwrap_or(0.0);
+                if quantity == 0.0 {
+                    match format {
+                        OutputFormat::Json | OutputFormat::JsonPretty => {
+                            println!("{}", serde_json::to_string_pretty(&position)?);
+                        }
+                        OutputFormat::Table => {
+                            println!("No cross-margin position");
+                        }
+                    }
+                    return Ok(());
+                }
+
+                match format {
+                    OutputFormat::Json => println!("{}", serde_json::to_string(&position)?),
+                    OutputFormat::JsonPretty => println!("{}", serde_json::to_string_pretty(&position)?),
+                    OutputFormat::Table => {
+                        let side = if quantity > 0.0 { "Long" } else { "Short" };
+                        let row = CrossPositionRow {
+                            side: side.to_string(),
+                            quantity: format_sats(quantity.abs() as i64),
+                            leverage: position.leverage.map(|l| format!("{}x", l)).unwrap_or_else(|| "-".to_string()),
+                            entry_price: position.entry_price.map(format_price).unwrap_or_else(|| "-".to_string()),
+                            liquidation_price: position.liquidation_price.map(format_price).unwrap_or_else(|| "-".to_string()),
+                            margin: position.margin.map(|m| format_sats(m as i64)).unwrap_or_else(|| "-".to_string()),
+                            pl: position.pl.map(|p| format_sats(p as i64)).unwrap_or_else(|| "-".to_string()),
+                        };
+                        print_list(vec![row], format)?;
                     }
                 }
             }

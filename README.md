@@ -732,13 +732,13 @@ All sources are public APIs with no authentication required. Failed sources are 
 
 ## Commands
 
-10 MCP tools across 4 service groups. 30 CLI commands across 9 groups.
+10 MCP tools across 4 service groups. 31 CLI commands across 9 groups.
 
 | Group | CLI Commands | MCP Tools | Auth | Description |
 |-------|--------------|-----------|------|-------------|
 | market | 4 | 1 | No | Ticker, prices, index, funding rate |
 | account | 4 | 2 | Yes | Balance, info, leaderboard, list trades |
-| futures | 11 | 5 | Yes | Open, close, update, add margin |
+| futures | 12 | 5 | Yes | Open, close, update, add margin, cross position |
 | funding | 7 | 2 | Yes | Deposit, withdraw (Lightning & on-chain) |
 | auth | 4 | — | No | Login, logout, status |
 | tui | 1 | — | Optional | Interactive terminal dashboard |
@@ -784,6 +784,7 @@ All sources are public APIs with no authentication required. Failed sources are 
 | `lnmarkets futures cancel <ID>` | Cancel pending order |
 | `lnmarkets futures cancel-all` | Cancel all pending orders |
 | `lnmarkets futures close-all` | Close all running trades |
+| `lnmarkets futures cross` | Show cross-margin position |
 
 ### Funding (Private)
 
