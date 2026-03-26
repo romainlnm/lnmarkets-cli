@@ -428,6 +428,19 @@ impl Daemon {
         }
         println!();
 
+        // Set cross margin leverage at startup (Live mode only)
+        if self.config.mode == TradingMode::Live {
+            if let Some(ref client) = self.client {
+                use reqwest::Method;
+                let request = serde_json::json!({ "leverage": self.config.leverage });
+                match client.request::<serde_json::Value, _>(Method::PUT, "futures/cross/leverage", Some(&request)).await {
+                    Ok(_) => println!("  Cross leverage set to {}x", self.config.leverage),
+                    Err(e) => eprintln!("  \x1b[33m[WARN]\x1b[0m Failed to set cross leverage: {}", e),
+                }
+                println!();
+            }
+        }
+
         if self.config.mode == TradingMode::Paper {
             println!("\x1b[36m  Paper trading tracks simulated P&L with real prices.\x1b[0m");
             println!();
