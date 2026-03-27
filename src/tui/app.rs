@@ -528,6 +528,50 @@ impl App {
                     }
                 }
             }
+            // Fetch cross margin filled orders and convert to Trade format
+            if let Ok(cross_resp) = c
+                .request::<serde_json::Value, ()>(
+                    Method::GET,
+                    "futures/cross/orders/filled?limit=50",
+                    None,
+                )
+                .await
+            {
+                if let Some(orders) = cross_resp.get("data").and_then(|d| d.as_array()) {
+                    for order in orders {
+                        let cross_trade = Trade {
+                            id: order["id"].as_str().unwrap_or("").to_string(),
+                            user_id: None,
+                            side: order["side"].as_str().unwrap_or("buy").to_string(),
+                            order_type: order["type"].as_str().unwrap_or("market").to_string(),
+                            quantity: order["quantity"].as_i64().unwrap_or(0),
+                            leverage: order["leverage"].as_f64().unwrap_or(10.0),
+                            stop_loss: None,
+                            take_profit: None,
+                            price: order["price"].as_f64(),
+                            entry_price: order["price"].as_f64(),
+                            exit_price: None,
+                            margin: None,
+                            margin_with_cf: None,
+                            pl: order["tradingFee"].as_i64().map(|f| -f), // Fee as negative P&L
+                            liquidation_price: None,
+                            created_at: order["createdAt"].as_str().map(|s| s.to_string()),
+                            open_at: order["filledAt"].as_str().map(|s| s.to_string()),
+                            closed_at: order["filledAt"].as_str().map(|s| s.to_string()),
+                            last_update: None,
+                            margin_type: MarginType::Cross,
+                            opening_fee: order["tradingFee"].as_i64(),
+                            sum_carry_fees: None,
+                        };
+                        self.closed_trades.push(cross_trade);
+                    }
+                    // Sort by closed_at date (newest first)
+                    self.closed_trades.sort_by(|a, b| {
+                        b.closed_at.as_deref().unwrap_or("")
+                            .cmp(a.closed_at.as_deref().unwrap_or(""))
+                    });
+                }
+            }
             // Deposits & withdrawals history
             if let Ok(d) = c
                 .request::<Vec<Deposit>, ()>(
