@@ -251,7 +251,7 @@ lnmarkets daemon --agents pattern,macro,news,flow --interval 60
 
 | Agent | Data Source | Signals |
 |-------|-------------|---------|
-| `pattern` | Binance Spot API | RSI, MACD, EMA crossover, Bollinger Bands |
+| `pattern` | Binance Spot API | RSI, MACD, EMA crossover, Bollinger Bands, ATR |
 | `flow` | Binance Futures API | Taker volume, order book, funding rate, L/S ratio |
 | `whale` | Hyperliquid API | Copy top BTC perp traders (8 verified whales) |
 | `macro` | TradingView API | Economic data surprises, event warnings |
@@ -286,6 +286,8 @@ The pattern agent fetches 1-minute candles from Binance and calculates four indi
 | Bollinger Bands (20, 2σ) | 0.8 | Price below lower band | Price above upper band |
 
 Confidence = weighted average of agreeing signals. RSI and MACD carry the most weight as leading indicators.
+
+**ATR (Average True Range)** is also calculated and reported as a percentage of price. This measures market volatility — low ATR indicates a ranging/choppy market where signals are less reliable. See `--min-atr` below.
 
 ### Flow Agent - Order Flow Analysis
 
@@ -440,7 +442,14 @@ The daemon automatically manages positions:
 
 ### Anti-Whipsaw Protections
 
-Rapid market news (geopolitical events, Fed announcements) can cause agents to flip-flop between LONG and SHORT signals. Three safeguards prevent excessive reversals:
+Rapid market news (geopolitical events, Fed announcements) can cause agents to flip-flop between LONG and SHORT signals. Four safeguards prevent excessive reversals:
+
+**ATR Volatility Filter:**
+- Skips trading when ATR% is below threshold (low volatility = choppy market)
+- Default: 0.5% (`--min-atr 0.5`)
+- ATR < 0.5% typically indicates ranging conditions where signals whipsaw
+- Example: ATR 0.44% on a $300 range day → skip all trades
+- Prevents stop-loss churn in sideways markets
 
 **Reversal Premium (+10% confidence):**
 - Reversals require 10% higher confidence than regular trades
@@ -494,6 +503,7 @@ Options:
       --trailing-stop <PCT>       Trailing stop - close if ROE drops this much from peak [default: 3]
       --reversal-cooldown <SECS>  Cooldown after position reversal [default: 300]
       --conflict-threshold <N>    Skip if agents disagree by less than this [default: 0.3]
+      --min-atr <PCT>             Minimum ATR% to trade (volatility filter) [default: 0.5]
 
 Treasury options (claw-cash integration):
       --treasury                  Enable claw-cash treasury integration
@@ -523,6 +533,9 @@ lnmarkets daemon --live --agents pattern,flow --trailing-stop 3
 
 # Conservative: smaller positions, higher confidence required
 lnmarkets daemon --live --agents pattern,macro,news,flow --max-position 10 --leverage 5 --min-confidence 0.8
+
+# Volatility filter: only trade when ATR > 0.6% (skip choppy days)
+lnmarkets daemon --live --agents pattern,flow,whale --min-atr 0.6
 ```
 
 ### Exit Strategies

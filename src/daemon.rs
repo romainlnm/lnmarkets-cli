@@ -48,6 +48,8 @@ pub struct DaemonConfig {
     pub reversal_cooldown_secs: u64,
     /// Conflict threshold - skip if agents disagree by more than this (0.0-1.0)
     pub conflict_threshold: f64,
+    /// Minimum ATR% to trade (volatility filter) - None = disabled
+    pub min_atr_pct: Option<f64>,
     /// Treasury configuration (claw-cash integration)
     pub treasury: Option<TreasuryConfig>,
 }
@@ -66,6 +68,7 @@ impl Default for DaemonConfig {
             agents: vec!["pattern".to_string()],
             reversal_cooldown_secs: 300, // 5 minutes default
             conflict_threshold: 0.3,     // Skip if agents disagree by >30%
+            min_atr_pct: Some(0.5),      // 0.5% ATR minimum by default
             treasury: None,              // Disabled by default
         }
     }
@@ -415,6 +418,9 @@ impl Daemon {
         }
         println!("  Reversal cooldown: {}s", self.config.reversal_cooldown_secs);
         println!("  Conflict threshold: {:.0}%", self.config.conflict_threshold * 100.0);
+        if let Some(min_atr) = self.config.min_atr_pct {
+            println!("  Min ATR: {:.2}% (volatility filter)", min_atr);
+        }
         println!("  Agents: {:?}", self.config.agents);
 
         // Treasury status
@@ -662,6 +668,21 @@ impl Daemon {
     fn decide(&self, signals: &[Signal]) -> Option<TradeAction> {
         if signals.is_empty() {
             return None;
+        }
+
+        // Check ATR volatility filter (from pattern agent)
+        if let Some(min_atr) = self.config.min_atr_pct {
+            if let Some(pattern_signal) = signals.iter().find(|s| s.source == "pattern") {
+                if let Some(atr_pct) = pattern_signal.atr_pct {
+                    if atr_pct < min_atr {
+                        println!(
+                            "  \x1b[33m→ LOW VOLATILITY: ATR {:.2}% < {:.2}% threshold, skipping\x1b[0m",
+                            atr_pct, min_atr
+                        );
+                        return None;
+                    }
+                }
+            }
         }
 
         // Calculate weighted direction

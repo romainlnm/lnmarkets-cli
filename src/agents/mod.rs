@@ -42,6 +42,9 @@ pub struct Signal {
     pub reasoning: String,
     /// Timestamp of the signal
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// ATR percentage (volatility indicator) - only set by pattern agent
+    #[serde(default)]
+    pub atr_pct: Option<f64>,
 }
 
 impl Signal {
@@ -52,6 +55,18 @@ impl Signal {
             source: source.to_string(),
             reasoning: reasoning.to_string(),
             timestamp: chrono::Utc::now(),
+            atr_pct: None,
+        }
+    }
+
+    pub fn with_atr(direction: Direction, confidence: f64, source: &str, reasoning: &str, atr_pct: f64) -> Self {
+        Self {
+            direction,
+            confidence: confidence.clamp(0.0, 1.0),
+            source: source.to_string(),
+            reasoning: reasoning.to_string(),
+            timestamp: chrono::Utc::now(),
+            atr_pct: Some(atr_pct),
         }
     }
 

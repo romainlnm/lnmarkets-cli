@@ -123,6 +123,7 @@ async fn run() -> Result<()> {
                 agents: args.agents.clone(),
                 reversal_cooldown_secs: args.reversal_cooldown,
                 conflict_threshold: args.conflict_threshold,
+                min_atr_pct: Some(args.min_atr),
                 treasury,
             };
 

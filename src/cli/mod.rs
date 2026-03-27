@@ -131,6 +131,10 @@ pub struct DaemonArgs {
     #[arg(long, default_value = "0.3")]
     pub conflict_threshold: f64,
 
+    /// Minimum ATR% to trade (volatility filter) - skip if ATR < threshold (e.g., 0.5 = 0.5%)
+    #[arg(long, default_value = "0.5")]
+    pub min_atr: f64,
+
     /// Enable claw-cash treasury integration
     #[arg(long)]
     pub treasury: bool,

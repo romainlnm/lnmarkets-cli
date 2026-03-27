@@ -79,17 +79,19 @@ struct BinanceKline {
     _volume: String,
 }
 
-/// Price data point
+/// OHLC data point for ATR calculation
 #[derive(Debug, Clone)]
-struct PricePoint {
+struct OhlcPoint {
+    high: f64,
+    low: f64,
     close: f64,
-    timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 /// Pattern Agent implementation
 pub struct PatternAgent {
     config: PatternConfig,
-    prices: RwLock<VecDeque<PricePoint>>,
+    #[allow(dead_code)]
+    ohlc_data: RwLock<VecDeque<OhlcPoint>>,
     http_client: reqwest::Client,
 }
 
@@ -97,7 +99,7 @@ impl PatternAgent {
     pub fn new(config: PatternConfig) -> Self {
         Self {
             config,
-            prices: RwLock::new(VecDeque::with_capacity(100)),
+            ohlc_data: RwLock::new(VecDeque::with_capacity(100)),
             http_client: reqwest::Client::new(),
         }
     }
@@ -106,8 +108,8 @@ impl PatternAgent {
         Self::new(PatternConfig::default())
     }
 
-    /// Fetch recent klines from Binance
-    async fn fetch_prices(&self) -> Result<Vec<f64>> {
+    /// Fetch recent klines from Binance (returns OHLC data)
+    async fn fetch_ohlc(&self) -> Result<Vec<OhlcPoint>> {
         let url = format!(
             "https://api.binance.com/api/v3/klines?symbol={}&interval=1m&limit=50",
             self.config.symbol
@@ -123,14 +125,57 @@ impl PatternAgent {
             .await
             .context("Failed to parse Binance response")?;
 
-        let prices: Vec<f64> = response
+        let ohlc: Vec<OhlcPoint> = response
             .iter()
             .filter_map(|kline| {
-                kline.get(4)?.as_str()?.parse::<f64>().ok()
+                let high = kline.get(2)?.as_str()?.parse::<f64>().ok()?;
+                let low = kline.get(3)?.as_str()?.parse::<f64>().ok()?;
+                let close = kline.get(4)?.as_str()?.parse::<f64>().ok()?;
+                Some(OhlcPoint { high, low, close })
             })
             .collect();
 
-        Ok(prices)
+        Ok(ohlc)
+    }
+
+    /// Extract close prices from OHLC data
+    fn closes(ohlc: &[OhlcPoint]) -> Vec<f64> {
+        ohlc.iter().map(|p| p.close).collect()
+    }
+
+    /// Calculate ATR (Average True Range)
+    fn calculate_atr(ohlc: &[OhlcPoint], period: usize) -> Option<f64> {
+        if ohlc.len() < period + 1 {
+            return None;
+        }
+
+        let mut tr_sum = 0.0;
+        let start = ohlc.len() - period;
+
+        for i in start..ohlc.len() {
+            let high = ohlc[i].high;
+            let low = ohlc[i].low;
+            let prev_close = ohlc[i - 1].close;
+
+            // True Range = max(high-low, |high-prev_close|, |low-prev_close|)
+            let tr = (high - low)
+                .max((high - prev_close).abs())
+                .max((low - prev_close).abs());
+            tr_sum += tr;
+        }
+
+        Some(tr_sum / period as f64)
+    }
+
+    /// Calculate ATR as percentage of current price
+    fn calculate_atr_pct(ohlc: &[OhlcPoint], period: usize) -> Option<f64> {
+        let atr = Self::calculate_atr(ohlc, period)?;
+        let current_price = ohlc.last()?.close;
+        if current_price > 0.0 {
+            Some((atr / current_price) * 100.0)
+        } else {
+            None
+        }
     }
 
     /// Calculate RSI
@@ -237,15 +282,17 @@ impl PatternAgent {
     }
 
     /// Analyze indicators and produce signal
-    fn analyze_indicators(&self, prices: &[f64]) -> Signal {
+    fn analyze_indicators(&self, ohlc: &[OhlcPoint]) -> Signal {
+        let prices = Self::closes(ohlc);
         let current_price = *prices.last().unwrap_or(&0.0);
+        let atr_pct = Self::calculate_atr_pct(ohlc, 14).unwrap_or(0.0);
 
         // Calculate indicators
-        let rsi = Self::calculate_rsi(prices, self.config.rsi_period);
-        let ema_fast = Self::calculate_ema(prices, self.config.ema_fast);
-        let ema_slow = Self::calculate_ema(prices, self.config.ema_slow);
-        let bollinger = Self::calculate_bollinger(prices, self.config.bb_period, self.config.bb_std_dev);
-        let macd = Self::calculate_macd(prices, self.config.macd_fast, self.config.macd_slow, self.config.macd_signal);
+        let rsi = Self::calculate_rsi(&prices, self.config.rsi_period);
+        let ema_fast = Self::calculate_ema(&prices, self.config.ema_fast);
+        let ema_slow = Self::calculate_ema(&prices, self.config.ema_slow);
+        let bollinger = Self::calculate_bollinger(&prices, self.config.bb_period, self.config.bb_std_dev);
+        let macd = Self::calculate_macd(&prices, self.config.macd_fast, self.config.macd_slow, self.config.macd_signal);
 
         // Weighted signals: (direction, weight, confidence, reason)
         // Weight represents importance: RSI=1.5, MACD=1.3, EMA=1.0, BB=0.8
@@ -298,17 +345,20 @@ impl PatternAgent {
         // Build status line
         let macd_str = macd.map(|(_, _, h)| format!("{:.0}", h)).unwrap_or("-".into());
         let status = format!(
-            "BTC ${:.0} | RSI {:.1} | MACD {} | EMA {:.0}/{:.0}",
+            "BTC ${:.0} | RSI {:.1} | MACD {} | EMA {:.0}/{:.0} | ATR {:.2}%",
             current_price,
             rsi.unwrap_or(50.0),
             macd_str,
             ema_fast.unwrap_or(0.0),
             ema_slow.unwrap_or(0.0),
+            atr_pct,
         );
 
         // Combine signals with weighted voting
         if signals.is_empty() {
-            return Signal::neutral("pattern", &format!("{} | No signals", status));
+            let mut signal = Signal::neutral("pattern", &format!("{} | No signals", status));
+            signal.atr_pct = Some(atr_pct);
+            return signal;
         }
 
         let long_weighted: f64 = signals
@@ -340,19 +390,25 @@ impl PatternAgent {
         if long_weighted > short_weighted && long_weight_total > 0.0 {
             let confidence = (long_weighted / long_weight_total).min(0.9);
             if confidence >= 0.5 {
-                Signal::new(Direction::Long, confidence, "pattern", &reasoning)
+                Signal::with_atr(Direction::Long, confidence, "pattern", &reasoning, atr_pct)
             } else {
-                Signal::neutral("pattern", &reasoning)
+                let mut signal = Signal::neutral("pattern", &reasoning);
+                signal.atr_pct = Some(atr_pct);
+                signal
             }
         } else if short_weighted > long_weighted && short_weight_total > 0.0 {
             let confidence = (short_weighted / short_weight_total).min(0.9);
             if confidence >= 0.5 {
-                Signal::new(Direction::Short, confidence, "pattern", &reasoning)
+                Signal::with_atr(Direction::Short, confidence, "pattern", &reasoning, atr_pct)
             } else {
-                Signal::neutral("pattern", &reasoning)
+                let mut signal = Signal::neutral("pattern", &reasoning);
+                signal.atr_pct = Some(atr_pct);
+                signal
             }
         } else {
-            Signal::neutral("pattern", &reasoning)
+            let mut signal = Signal::neutral("pattern", &reasoning);
+            signal.atr_pct = Some(atr_pct);
+            signal
         }
     }
 }
@@ -364,16 +420,16 @@ impl Agent for PatternAgent {
     }
 
     async fn analyze(&self) -> Result<Signal> {
-        let prices = self.fetch_prices().await?;
+        let ohlc = self.fetch_ohlc().await?;
 
-        if prices.len() < self.config.ema_slow {
+        if ohlc.len() < self.config.ema_slow {
             return Ok(Signal::neutral(
                 "pattern",
-                &format!("Insufficient data: {} prices, need {}", prices.len(), self.config.ema_slow),
+                &format!("Insufficient data: {} candles, need {}", ohlc.len(), self.config.ema_slow),
             ));
         }
 
-        Ok(self.analyze_indicators(&prices))
+        Ok(self.analyze_indicators(&ohlc))
     }
 }
 
