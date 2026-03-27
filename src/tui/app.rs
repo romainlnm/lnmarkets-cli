@@ -553,7 +553,7 @@ impl App {
                             exit_price: None,
                             margin: None,
                             margin_with_cf: None,
-                            pl: order["tradingFee"].as_i64().map(|f| -f), // Fee as negative P&L
+                            pl: None, // Cross orders don't have individual P&L
                             liquidation_price: None,
                             created_at: order["createdAt"].as_str().map(|s| s.to_string()),
                             open_at: order["filledAt"].as_str().map(|s| s.to_string()),
