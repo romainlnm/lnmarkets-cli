@@ -68,7 +68,7 @@ impl Default for DaemonConfig {
             agents: vec!["pattern".to_string()],
             reversal_cooldown_secs: 300, // 5 minutes default
             conflict_threshold: 0.3,     // Skip if agents disagree by >30%
-            min_atr_pct: Some(0.5),      // 0.5% ATR minimum by default
+            min_atr_pct: Some(0.1),      // 0.1% ATR minimum by default
             treasury: None,              // Disabled by default
         }
     }

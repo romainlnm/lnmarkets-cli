@@ -446,9 +446,9 @@ Rapid market news (geopolitical events, Fed announcements) can cause agents to f
 
 **ATR Volatility Filter:**
 - Skips trading when ATR% is below threshold (low volatility = choppy market)
-- Default: 0.5% (`--min-atr 0.5`)
-- ATR < 0.5% typically indicates ranging conditions where signals whipsaw
-- Example: ATR 0.44% on a $300 range day → skip all trades
+- Default: 0.1% (`--min-atr 0.1`)
+- ATR < 0.1% typically indicates very tight ranging conditions
+- Example: ATR 0.05% on a $34 average range → skip trades
 - Prevents stop-loss churn in sideways markets
 
 **Reversal Premium (+10% confidence):**
@@ -503,7 +503,7 @@ Options:
       --trailing-stop <PCT>       Trailing stop - close if ROE drops this much from peak [default: 3]
       --reversal-cooldown <SECS>  Cooldown after position reversal [default: 300]
       --conflict-threshold <N>    Skip if agents disagree by less than this [default: 0.3]
-      --min-atr <PCT>             Minimum ATR% to trade (volatility filter) [default: 0.5]
+      --min-atr <PCT>             Minimum ATR% to trade (volatility filter) [default: 0.1]
 
 Treasury options (claw-cash integration):
       --treasury                  Enable claw-cash treasury integration
