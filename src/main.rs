@@ -231,12 +231,13 @@ async fn run() -> Result<()> {
             }
 
             // Calculate realized P&L for closed portion (matched buy/sell pairs)
-            // Inverse perpetual: P&L = (sell_value - buy_value) * 100_000_000
+            // Inverse perpetual LONG: P&L = (1/entry - 1/exit) * qty * 100M = (buy_value - sell_value) * 100M
+            // When you go long and price rises, you paid more BTC at entry than you receive at exit
             let closed_qty = buy_qty.min(sell_qty);
             let realized_pl = if closed_qty > 0.0 {
                 let buy_ratio = closed_qty / buy_qty.max(0.001);
                 let sell_ratio = closed_qty / sell_qty.max(0.001);
-                ((sell_value * sell_ratio) - (buy_value * buy_ratio)) * 100_000_000.0
+                ((buy_value * buy_ratio) - (sell_value * sell_ratio)) * 100_000_000.0
             } else {
                 0.0
             } as i64;
@@ -253,8 +254,11 @@ async fn run() -> Result<()> {
 
             // P&L section (realized only - unrealized requires checking GUI)
             if realized_pl != 0 || total_fees > 0 {
-                let realized_color = if net_realized >= 0 { "\x1b[32m" } else { "\x1b[31m" };
-                println!("Realized Net P&L: {}{:+} sats\x1b[0m", realized_color, net_realized);
+                let gross_color = if realized_pl >= 0 { "\x1b[32m" } else { "\x1b[31m" };
+                let net_color = if net_realized >= 0 { "\x1b[32m" } else { "\x1b[31m" };
+                println!("Gross P&L:       {}{:+} sats\x1b[0m", gross_color, realized_pl);
+                println!("Fees:            \x1b[33m-{} sats\x1b[0m", total_fees);
+                println!("Net P&L:         {}{:+} sats\x1b[0m", net_color, net_realized);
             }
 
             if args.trades {
