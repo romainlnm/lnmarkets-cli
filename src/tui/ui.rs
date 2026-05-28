@@ -267,36 +267,48 @@ fn dash(f: &mut Frame, a: &App, ar: Rect) {
             .graph_type(GraphType::Line)
             .style(Style::default().fg(line_color))
             .data(&points);
-        let last_label = a
-            .price_history
-            .last()
-            .map(|p| format!(" ${} ", fp(*p)))
-            .unwrap_or_default();
+        // Y-axis scale — labels distributed evenly between bounds. Use the padded
+        // bounds so labels align with the axis ticks, not the data extremes.
+        let y_mid = (y_min + y_max) / 2.0;
+        let axis_label_style = Style::default().fg(dm(a));
+        let y_labels = vec![
+            Span::styled(format!("${}", fp(y_min)), axis_label_style),
+            Span::styled(format!("${}", fp(y_mid)), axis_label_style),
+            Span::styled(format!("${}", fp(y_max)), axis_label_style),
+        ];
+        // Footer shows the live price prominently + the net change across the
+        // visible window (the L$/H$ stats now live on the y-axis itself).
+        let last_price = *a.price_history.last().unwrap_or(&0.0);
+        let first_price = *a.price_history.first().unwrap_or(&last_price);
+        let delta = last_price - first_price;
+        let delta_pct = if first_price > 0.0 { delta / first_price * 100.0 } else { 0.0 };
+        let delta_color = if delta >= 0.0 { gr(a) } else { rd(a) };
+        let sign = if delta >= 0.0 { "+" } else { "" };
         f.render_widget(
             Chart::new(vec![dataset])
                 .block(
                     pb(a, " BTC ")
                         .title_bottom(Line::from(vec![
                             Span::styled(
-                                format!(" L${} ", fp(mn)),
-                                Style::default().fg(rd(a)),
+                                format!(" ${} ", fp(last_price)),
+                                Style::default().fg(line_color),
                             ),
                             Span::styled(
-                                format!(" H${} ", fp(mx)),
-                                Style::default().fg(gr(a)),
+                                format!("{}{:.2}% ", sign, delta_pct),
+                                Style::default().fg(delta_color),
                             ),
-                            Span::styled(last_label, Style::default().fg(line_color)),
                         ])),
                 )
                 .x_axis(
                     Axis::default()
-                        .style(Style::default().fg(dm(a)))
+                        .style(axis_label_style)
                         .bounds([0.0, (points.len().saturating_sub(1)) as f64]),
                 )
                 .y_axis(
                     Axis::default()
-                        .style(Style::default().fg(dm(a)))
-                        .bounds([y_min, y_max]),
+                        .style(axis_label_style)
+                        .bounds([y_min, y_max])
+                        .labels(y_labels),
                 )
                 .style(Style::default().bg(b2(a))),
             ch[1],
