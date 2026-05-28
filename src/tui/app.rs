@@ -1,4 +1,5 @@
 use super::popup::{Notification, Popup};
+use crate::api::stream::StreamStatus;
 use crate::api::LnmClient;
 use crate::models::funding::{Deposit, Withdrawal};
 use crate::models::futures::{MarginType, Trade};
@@ -70,6 +71,7 @@ pub struct App {
     pub client: Option<LnmClient>,
     pub dark_theme: bool,
     pub use_testnet: bool,
+    pub stream_status: StreamStatus,
 }
 
 impl App {
@@ -96,7 +98,20 @@ impl App {
             client,
             dark_theme: true,
             use_testnet: false,
+            stream_status: StreamStatus::Disconnected,
         }
+    }
+
+    /// Merge a Ticker pushed by the stream client into the current app state,
+    /// preserving the orderbook levels (`prices`) populated by REST polling — the
+    /// stream ticker channel doesn't carry them (they come from `buckets`).
+    pub fn apply_stream_ticker(&mut self, mut next: Ticker) {
+        if let Some(existing) = &self.ticker {
+            if next.prices.is_empty() {
+                next.prices = existing.prices.clone();
+            }
+        }
+        self.ticker = Some(next);
     }
     pub fn notify(&mut self, n: Notification) {
         self.notifications.push(n);

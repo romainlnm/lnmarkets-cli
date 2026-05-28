@@ -3,6 +3,7 @@ mod app;
 mod event;
 mod popup;
 mod ui;
+use crate::api::stream::{self, StreamEvent};
 use crate::api::LnmClient;
 use anyhow::Result;
 pub use app::App;
@@ -20,7 +21,8 @@ pub async fn run(refresh_secs: u64, client: Option<LnmClient>) -> Result<()> {
     execute!(o, EnterAlternateScreen, EnableMouseCapture)?;
     let mut t = Terminal::new(CrosstermBackend::new(o))?;
     let mut a = App::new(refresh_secs, client);
-    let mut e = EventHandler::new(refresh_secs);
+    let stream = stream::start();
+    let mut e = EventHandler::new(refresh_secs, Some(stream.events));
     a.refresh_all().await;
     loop {
         t.draw(|f| ui::draw(f, &a))?;
@@ -35,6 +37,12 @@ pub async fn run(refresh_secs: u64, client: Option<LnmClient>) -> Result<()> {
                 }
             }
             event::AppEvent::Resize => {}
+            event::AppEvent::Stream(StreamEvent::Status(s)) => {
+                a.stream_status = s;
+            }
+            event::AppEvent::Stream(StreamEvent::Ticker(tk)) => {
+                a.apply_stream_ticker(tk);
+            }
         }
     }
     disable_raw_mode()?;
