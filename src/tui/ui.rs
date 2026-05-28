@@ -239,25 +239,66 @@ fn dash(f: &mut Frame, a: &App, ar: Rect) {
             .style(Style::default().bg(b2(a))),
         top[1],
     );
-    // Sparkline
-    if !a.price_history.is_empty() {
-        let d: Vec<u64> = a.price_history.iter().map(|p| *p as u64).collect();
-        let (mn, mx) = (
-            d.iter().copied().min().unwrap_or(0),
-            d.iter().copied().max().unwrap_or(1),
-        );
-        let n: Vec<u64> = d
+    // Live BTC chart — fed by the stream ticker on every push.
+    if a.price_history.len() >= 2 {
+        let points: Vec<(f64, f64)> = a
+            .price_history
             .iter()
-            .map(|v| v.saturating_sub(mn.saturating_sub(100)))
+            .enumerate()
+            .map(|(i, p)| (i as f64, *p))
             .collect();
+        let mn = points.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
+        let mx = points.iter().map(|(_, y)| *y).fold(f64::NEG_INFINITY, f64::max);
+        // Pad the y-range so the line never sits flush against the borders.
+        let pad = ((mx - mn).abs() * 0.08).max(1.0);
+        let y_min = mn - pad;
+        let y_max = mx + pad;
+        // Color the line by recent direction: green if last move up, red if down.
+        let trend_up = a
+            .price_history
+            .last()
+            .zip(a.price_history.get(a.price_history.len().saturating_sub(2)))
+            .map(|(last, prev)| last >= prev)
+            .unwrap_or(true);
+        let line_color = if trend_up { gr(a) } else { rd(a) };
+        let dataset = Dataset::default()
+            .name("BTC")
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(line_color))
+            .data(&points);
+        let last_label = a
+            .price_history
+            .last()
+            .map(|p| format!(" ${} ", fp(*p)))
+            .unwrap_or_default();
         f.render_widget(
-            Sparkline::default()
-                .block(pb(a, " BTC ").title_bottom(Line::from(vec![
-                    Span::styled(format!(" L${} ", fp(mn as f64)), Style::default().fg(rd(a))),
-                    Span::styled(format!(" H${} ", fp(mx as f64)), Style::default().fg(gr(a))),
-                ])))
-                .data(&n)
-                .style(Style::default().fg(or(a)).bg(b2(a))),
+            Chart::new(vec![dataset])
+                .block(
+                    pb(a, " BTC ")
+                        .title_bottom(Line::from(vec![
+                            Span::styled(
+                                format!(" L${} ", fp(mn)),
+                                Style::default().fg(rd(a)),
+                            ),
+                            Span::styled(
+                                format!(" H${} ", fp(mx)),
+                                Style::default().fg(gr(a)),
+                            ),
+                            Span::styled(last_label, Style::default().fg(line_color)),
+                        ])),
+                )
+                .x_axis(
+                    Axis::default()
+                        .style(Style::default().fg(dm(a)))
+                        .bounds([0.0, (points.len().saturating_sub(1)) as f64]),
+                )
+                .y_axis(
+                    Axis::default()
+                        .style(Style::default().fg(dm(a)))
+                        .bounds([y_min, y_max]),
+                )
+                .style(Style::default().bg(b2(a))),
             ch[1],
         );
     } else {

@@ -105,13 +105,32 @@ impl App {
     /// Merge a Ticker pushed by the stream client into the current app state,
     /// preserving the orderbook levels (`prices`) populated by REST polling — the
     /// stream ticker channel doesn't carry them (they come from `buckets`).
+    /// Also feeds the price tape so the Dashboard chart moves in real time.
     pub fn apply_stream_ticker(&mut self, mut next: Ticker) {
         if let Some(existing) = &self.ticker {
             if next.prices.is_empty() {
                 next.prices = existing.prices.clone();
             }
         }
+        if let Some(p) = next.last_price.or(Some(next.index)).filter(|v| *v > 0.0) {
+            self.push_price_tick(p);
+        }
         self.ticker = Some(next);
+    }
+
+    const PRICE_TAPE_CAP: usize = 300;
+
+    fn push_price_tick(&mut self, price: f64) {
+        // Avoid pushing the exact same value twice in a row — keeps the chart from
+        // collecting flat segments when the WS resends the same price.
+        if self.price_history.last().map_or(false, |&p| (p - price).abs() < f64::EPSILON) {
+            return;
+        }
+        self.price_history.push(price);
+        if self.price_history.len() > Self::PRICE_TAPE_CAP {
+            let excess = self.price_history.len() - Self::PRICE_TAPE_CAP;
+            self.price_history.drain(0..excess);
+        }
     }
     pub fn notify(&mut self, n: Notification) {
         self.notifications.push(n);
