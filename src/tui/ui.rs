@@ -719,6 +719,20 @@ fn ftr(f: &mut Frame, a: &App, ar: Rect) {
         sp.push(Span::styled("L", Style::default().fg(yl(a)).bold()));
         sp.push(Span::styled(" login ", Style::default().fg(dm(a))));
     }
+    // Stream connection state indicator: colored dot + short label.
+    use crate::api::stream::StreamStatus;
+    let (dot_color, label) = match a.stream_status {
+        StreamStatus::Connected => (gr(a), "live"),
+        StreamStatus::Authenticated => (gr(a), "live ●●"),
+        StreamStatus::Connecting => (yl(a), "connecting"),
+        StreamStatus::Disconnected => (rd(a), "offline"),
+    };
+    sp.push(Span::styled(" │ ", Style::default().fg(dm(a))));
+    sp.push(Span::styled("●", Style::default().fg(dot_color).bold()));
+    sp.push(Span::styled(
+        format!(" {}", label),
+        Style::default().fg(dm(a)),
+    ));
     if !a.last_refresh.is_empty() {
         sp.push(Span::styled(
             format!(" │ ⟳ {}({}s)", a.last_refresh, a.refresh_secs),

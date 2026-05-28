@@ -174,4 +174,8 @@ pub struct TuiArgs {
     /// Refresh interval in seconds
     #[arg(long, default_value = "5")]
     pub refresh: u64,
+
+    /// Disable the WebSocket stream and use REST polling only (debugging)
+    #[arg(long)]
+    pub no_stream: bool,
 }
