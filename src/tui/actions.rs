@@ -588,7 +588,6 @@ impl App {
             reversal_cooldown_secs: 300, // 5 minute cooldown
             conflict_threshold: 0.3,     // Skip if agents disagree by <30%
             min_atr_pct: None,           // ATR filter disabled in TUI for now
-            treasury: None,              // TUI doesn't support treasury yet
         };
         let client = if mode == crate::daemon::TradingMode::Live {
             let cfg = crate::config::Config::load().unwrap_or_default();

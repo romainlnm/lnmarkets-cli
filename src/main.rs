@@ -9,7 +9,6 @@ mod mcp;
 mod models;
 mod recap;
 mod stats;
-mod treasury;
 
 use anyhow::Result;
 use clap::Parser;
@@ -86,7 +85,6 @@ async fn run() -> Result<()> {
 
         Commands::Daemon(args) => {
             use daemon::{Daemon, DaemonConfig, TradingMode};
-            use treasury::TreasuryConfig;
 
             // Determine trading mode
             let mode = if args.live {
@@ -95,21 +93,6 @@ async fn run() -> Result<()> {
                 TradingMode::Paper
             } else {
                 TradingMode::DryRun
-            };
-
-            // Treasury configuration
-            let treasury = if args.treasury || args.treasury_mock {
-                Some(TreasuryConfig {
-                    claw_url: args.claw_url.clone(),
-                    min_exchange_balance: args.treasury_min,
-                    max_exchange_balance: args.treasury_max,
-                    fund_amount: args.treasury_min * 2,  // Fund 2x minimum
-                    auto_withdraw: true,
-                    auto_fund: true,
-                    mock: args.treasury_mock,
-                })
-            } else {
-                None
             };
 
             let daemon_config = DaemonConfig {
@@ -125,7 +108,6 @@ async fn run() -> Result<()> {
                 reversal_cooldown_secs: args.reversal_cooldown,
                 conflict_threshold: args.conflict_threshold,
                 min_atr_pct: Some(args.min_atr),
-                treasury,
             };
 
             // Only load client for live trading
