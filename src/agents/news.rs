@@ -1,192 +1,84 @@
-//! News Agent - RSS & Sentiment Signals
-//!
-//! Aggregates crypto news and produces trading signals based on:
-//! - Breaking news detection (spike in mentions)
-//! - Keyword sentiment analysis
-//! - Source credibility weighting
+//! News collector — pulls headlines from a fixed set of RSS feeds.
+//! No sentiment scoring — keyword bags were the weakest signal in the old
+//! system. The LLM reads the actual headlines and reasons about them.
 
-use super::{Agent, Direction, Signal};
+use super::DataCollector;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde_json::{json, Value};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 
-/// News source with credibility weight
 #[derive(Debug, Clone)]
 pub struct NewsSource {
     pub name: String,
     pub url: String,
-    pub weight: f64, // 0.0 - 1.0 credibility
 }
 
 impl NewsSource {
-    pub fn new(name: &str, url: &str, weight: f64) -> Self {
+    pub fn new(name: &str, url: &str) -> Self {
         Self {
             name: name.to_string(),
             url: url.to_string(),
-            weight: weight.clamp(0.0, 1.0),
         }
     }
 }
 
-/// Default crypto news sources
 fn default_sources() -> Vec<NewsSource> {
     vec![
-        // Fast breaking news sources (general market/geopolitical)
         NewsSource::new(
             "CNBC Top News",
             "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
-            0.9,
         ),
-        NewsSource::new(
-            "ZeroHedge",
-            "https://feeds.feedburner.com/zerohedge/feed",
-            0.85,
-        ),
+        NewsSource::new("ZeroHedge", "https://feeds.feedburner.com/zerohedge/feed"),
         NewsSource::new(
             "MarketWatch",
             "https://feeds.marketwatch.com/marketwatch/topstories/",
-            0.85,
         ),
-        NewsSource::new(
-            "Yahoo Finance",
-            "https://finance.yahoo.com/news/rssindex",
-            0.8,
-        ),
-        // Crypto-specific sources
-        NewsSource::new(
-            "CoinDesk",
-            "https://www.coindesk.com/arc/outboundfeeds/rss/",
-            0.9,
-        ),
-        NewsSource::new(
-            "Cointelegraph",
-            "https://cointelegraph.com/rss",
-            0.8,
-        ),
-        NewsSource::new(
-            "Bitcoin Magazine",
-            "https://bitcoinmagazine.com/feed",
-            0.9,
-        ),
-        NewsSource::new(
-            "Decrypt",
-            "https://decrypt.co/feed",
-            0.75,
-        ),
-        NewsSource::new(
-            "CryptoSlate",
-            "https://cryptoslate.com/feed/",
-            0.7,
-        ),
-        // Additional fast sources
-        NewsSource::new(
-            "The Block",
-            "https://www.theblock.co/rss.xml",
-            0.85,
-        ),
+        NewsSource::new("Yahoo Finance", "https://finance.yahoo.com/news/rssindex"),
+        NewsSource::new("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+        NewsSource::new("Cointelegraph", "https://cointelegraph.com/rss"),
+        NewsSource::new("Bitcoin Magazine", "https://bitcoinmagazine.com/feed"),
+        NewsSource::new("Decrypt", "https://decrypt.co/feed"),
+        NewsSource::new("CryptoSlate", "https://cryptoslate.com/feed/"),
+        NewsSource::new("The Block", "https://www.theblock.co/rss.xml"),
     ]
 }
 
-/// Parsed news item
 #[derive(Debug, Clone)]
 pub struct NewsItem {
     pub title: String,
     pub source: String,
     pub published: Option<DateTime<Utc>>,
-    pub link: String,
-    pub sentiment: Sentiment,
-    pub relevance: f64,
 }
 
-/// Sentiment classification
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Sentiment {
-    Bullish,
-    Bearish,
-    Neutral,
-}
-
-/// Keywords for sentiment analysis
-struct SentimentKeywords {
-    bullish: Vec<&'static str>,
-    bearish: Vec<&'static str>,
-    high_impact: Vec<&'static str>,
-}
-
-impl Default for SentimentKeywords {
-    fn default() -> Self {
-        Self {
-            bullish: vec![
-                "surge", "soar", "rally", "bullish", "breakout", "all-time high", "ath",
-                "adoption", "institutional", "etf approved", "etf approval", "accumulate",
-                "buy", "moon", "pump", "gains", "profit", "growth", "upgrade",
-                "partnership", "integration", "mainstream", "milestone", "record",
-                "inflow", "demand", "scarce", "halving", "bullrun",
-                // Geopolitical bullish (de-escalation, peace)
-                "peace", "ceasefire", "truce", "deal reached", "agreement", "talks positive",
-                "postpone", "delay strike", "diplomatic", "de-escalation",
-            ],
-            bearish: vec![
-                "crash", "plunge", "dump", "bearish", "sell-off", "selloff", "collapse",
-                "hack", "hacked", "exploit", "vulnerability", "ban", "banned", "crackdown",
-                "regulation", "sec", "lawsuit", "fraud", "scam", "ponzi", "rug pull",
-                "bankruptcy", "insolvent", "liquidation", "outflow", "fear", "panic",
-                "correction", "decline", "drop", "fall", "tumble", "tank",
-                // Geopolitical bearish (conflict, escalation)
-                "war", "strike", "attack", "missile", "bomb", "invasion", "military action",
-                "sanctions", "escalation", "conflict", "troops", "nuclear", "retaliation",
-            ],
-            high_impact: vec![
-                "bitcoin", "btc", "lightning", "etf", "sec", "fed", "fomc",
-                "halving", "institutional", "blackrock", "fidelity", "microstrategy",
-                "el salvador", "regulation", "ban", "hack", "breaking",
-                // Geopolitical high-impact (market-moving events)
-                "trump", "biden", "president", "iran", "israel", "russia", "ukraine",
-                "china", "taiwan", "north korea", "middle east", "pentagon", "nato",
-                "oil", "gold", "treasury", "tariff", "trade war", "emergency",
-            ],
-        }
-    }
-}
-
-/// Configuration for News Agent
 #[derive(Debug, Clone)]
 pub struct NewsConfig {
-    /// Maximum age of news to consider (in hours)
     pub max_age_hours: i64,
-    /// Minimum relevance score to include
-    pub min_relevance: f64,
-    /// Number of recent items to analyze
     pub max_items: usize,
-    /// Cache TTL in minutes (avoid rate limiting)
     pub cache_ttl_mins: i64,
 }
 
 impl Default for NewsConfig {
     fn default() -> Self {
         Self {
-            max_age_hours: 2,       // Focus on more recent news
-            min_relevance: 0.2,     // Lower threshold to catch more breaking news
-            max_items: 30,          // More items to analyze
-            cache_ttl_mins: 2,      // Refresh more frequently for breaking news
+            max_age_hours: 2,
+            max_items: 30,
+            cache_ttl_mins: 2,
         }
     }
 }
 
-/// Cached news data
 struct NewsCache {
     items: Vec<NewsItem>,
     fetched_at: DateTime<Utc>,
 }
 
-/// News Agent implementation
 pub struct NewsAgent {
     config: NewsConfig,
     sources: Vec<NewsSource>,
-    keywords: SentimentKeywords,
     http_client: reqwest::Client,
     cache: Arc<RwLock<Option<NewsCache>>>,
 }
@@ -196,9 +88,8 @@ impl NewsAgent {
         Self {
             config,
             sources: default_sources(),
-            keywords: SentimentKeywords::default(),
             http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
+                .timeout(Duration::from_secs(10))
                 .build()
                 .unwrap_or_default(),
             cache: Arc::new(RwLock::new(None)),
@@ -209,179 +100,62 @@ impl NewsAgent {
         Self::new(NewsConfig::default())
     }
 
-    /// Check if cache is still valid
     async fn is_cache_valid(&self) -> bool {
         let cache = self.cache.read().await;
         if let Some(ref c) = *cache {
-            let age = Utc::now() - c.fetched_at;
-            age.num_minutes() < self.config.cache_ttl_mins
+            (Utc::now() - c.fetched_at).num_minutes() < self.config.cache_ttl_mins
         } else {
             false
         }
     }
 
-    /// Get cached items or fetch new ones
     async fn get_news(&self) -> Vec<NewsItem> {
-        // Check cache first
         if self.is_cache_valid().await {
-            let cache = self.cache.read().await;
-            if let Some(ref c) = *cache {
+            if let Some(ref c) = *self.cache.read().await {
                 return c.items.clone();
             }
         }
-
-        // Fetch fresh data
         let items = self.fetch_all_news().await;
-
-        // Update cache
-        let mut cache = self.cache.write().await;
-        *cache = Some(NewsCache {
+        *self.cache.write().await = Some(NewsCache {
             items: items.clone(),
             fetched_at: Utc::now(),
         });
-
         items
     }
 
-    /// Fetch and parse RSS feed
     async fn fetch_feed(&self, source: &NewsSource) -> Result<Vec<NewsItem>> {
-        let response = self.http_client
+        let response = self
+            .http_client
             .get(&source.url)
             .header("User-Agent", "Mozilla/5.0 (compatible; LNMarketsBot/1.0)")
             .send()
             .await?;
-
         if !response.status().is_success() {
             anyhow::bail!("Feed {} returned {}", source.name, response.status());
         }
-
         let text = response.text().await?;
-        self.parse_rss(&text, source)
+        Ok(self.parse_rss(&text, source))
     }
 
-    /// Parse RSS XML into news items
-    fn parse_rss(&self, xml: &str, source: &NewsSource) -> Result<Vec<NewsItem>> {
+    fn parse_rss(&self, xml: &str, source: &NewsSource) -> Vec<NewsItem> {
         let mut items = Vec::new();
-
-        // Simple RSS parsing (avoid heavy XML dependencies)
         for item_match in xml.split("<item>").skip(1) {
             let end = item_match.find("</item>").unwrap_or(item_match.len());
             let item_xml = &item_match[..end];
-
-            let title = self.extract_tag(item_xml, "title").unwrap_or_default();
-            let link = self.extract_tag(item_xml, "link").unwrap_or_default();
-            let pub_date = self.extract_tag(item_xml, "pubDate");
-
+            let title = extract_tag(item_xml, "title").unwrap_or_default();
             if title.is_empty() {
                 continue;
             }
-
-            let published = pub_date.and_then(|d| self.parse_rss_date(&d));
-            let (sentiment, relevance) = self.analyze_text(&title);
-
+            let published = extract_tag(item_xml, "pubDate").and_then(|d| parse_rss_date(&d));
             items.push(NewsItem {
                 title,
                 source: source.name.clone(),
                 published,
-                link,
-                sentiment,
-                relevance: relevance * source.weight,
             });
         }
-
-        Ok(items)
+        items
     }
 
-    /// Extract content from XML tag
-    fn extract_tag(&self, xml: &str, tag: &str) -> Option<String> {
-        let start_tag = format!("<{}>", tag);
-        let cdata_start = format!("<{}><![CDATA[", tag);
-        let end_tag = format!("</{}>", tag);
-
-        // Try CDATA format first
-        if let Some(start) = xml.find(&cdata_start) {
-            let content_start = start + cdata_start.len();
-            if let Some(end) = xml[content_start..].find("]]>") {
-                return Some(xml[content_start..content_start + end].trim().to_string());
-            }
-        }
-
-        // Regular tag
-        if let Some(start) = xml.find(&start_tag) {
-            let content_start = start + start_tag.len();
-            if let Some(end) = xml[content_start..].find(&end_tag) {
-                let content = &xml[content_start..content_start + end];
-                // Strip CDATA if present
-                let clean = content
-                    .trim()
-                    .trim_start_matches("<![CDATA[")
-                    .trim_end_matches("]]>")
-                    .trim();
-                return Some(clean.to_string());
-            }
-        }
-
-        None
-    }
-
-    /// Parse RSS date formats
-    fn parse_rss_date(&self, date_str: &str) -> Option<DateTime<Utc>> {
-        // RFC 2822 format (common in RSS)
-        if let Ok(dt) = DateTime::parse_from_rfc2822(date_str) {
-            return Some(dt.with_timezone(&Utc));
-        }
-
-        // RFC 3339 format
-        if let Ok(dt) = DateTime::parse_from_rfc3339(date_str) {
-            return Some(dt.with_timezone(&Utc));
-        }
-
-        None
-    }
-
-    /// Analyze text for sentiment and relevance
-    fn analyze_text(&self, text: &str) -> (Sentiment, f64) {
-        let lower = text.to_lowercase();
-
-        let mut bullish_score: f64 = 0.0;
-        let mut bearish_score: f64 = 0.0;
-        let mut relevance: f64 = 0.0;
-
-        // Check bullish keywords
-        for keyword in &self.keywords.bullish {
-            if lower.contains(keyword) {
-                bullish_score += 1.0;
-            }
-        }
-
-        // Check bearish keywords
-        for keyword in &self.keywords.bearish {
-            if lower.contains(keyword) {
-                bearish_score += 1.0;
-            }
-        }
-
-        // Check high-impact keywords for relevance
-        for keyword in &self.keywords.high_impact {
-            if lower.contains(keyword) {
-                relevance += 0.2;
-            }
-        }
-
-        relevance = relevance.min(1.0);
-
-        let sentiment = if bullish_score > bearish_score + 0.5 {
-            Sentiment::Bullish
-        } else if bearish_score > bullish_score + 0.5 {
-            Sentiment::Bearish
-        } else {
-            Sentiment::Neutral
-        };
-
-        (sentiment, relevance)
-    }
-
-    /// Fetch all feeds and aggregate news
     async fn fetch_all_news(&self) -> Vec<NewsItem> {
         let mut all_items = Vec::new();
         let now = Utc::now();
@@ -391,132 +165,90 @@ impl NewsAgent {
             match self.fetch_feed(source).await {
                 Ok(items) => {
                     for item in items {
-                        // Filter by age
                         if let Some(pub_date) = item.published {
                             if now - pub_date > max_age {
                                 continue;
                             }
                         }
-
-                        // Filter by relevance
-                        if item.relevance >= self.config.min_relevance {
-                            all_items.push(item);
-                        }
+                        all_items.push(item);
                     }
                 }
                 Err(e) => {
-                    eprintln!("[news] Failed to fetch {}: {}", source.name, e);
+                    eprintln!("[news] failed to fetch {}: {}", source.name, e);
                 }
             }
         }
-
-        // Sort by publication date (newest first)
-        all_items.sort_by(|a, b| {
-            b.published.cmp(&a.published)
-        });
-
-        // Limit items
+        all_items.sort_by(|a, b| b.published.cmp(&a.published));
         all_items.truncate(self.config.max_items);
         all_items
-    }
-
-    /// Analyze aggregated news and produce signal
-    fn analyze_news(&self, items: &[NewsItem]) -> Signal {
-        if items.is_empty() {
-            return Signal::neutral("news", "No relevant news in last few hours");
-        }
-
-        let mut bullish_count = 0;
-        let mut bearish_count = 0;
-        let mut total_relevance = 0.0;
-
-        for item in items {
-            match item.sentiment {
-                Sentiment::Bullish => bullish_count += 1,
-                Sentiment::Bearish => bearish_count += 1,
-                Sentiment::Neutral => {}
-            }
-            total_relevance += item.relevance;
-        }
-
-        let total = items.len() as f64;
-        let avg_relevance = total_relevance / total;
-
-        // Build summary
-        let top_headlines: Vec<String> = items
-            .iter()
-            .take(3)
-            .map(|i| format!("[{}] {}", i.source, truncate(&i.title, 50)))
-            .collect();
-
-        let summary = format!(
-            "{} articles | {}B/{}N/{}b | {}",
-            items.len(),
-            bullish_count,
-            items.len() - bullish_count - bearish_count,
-            bearish_count,
-            top_headlines.first().unwrap_or(&"".to_string())
-        );
-
-        // Determine direction
-        let bullish_ratio = bullish_count as f64 / total;
-        let bearish_ratio = bearish_count as f64 / total;
-
-        let (direction, confidence) = if bullish_ratio > 0.5 && bullish_ratio > bearish_ratio * 2.0 {
-            (Direction::Long, 0.5 + avg_relevance * 0.3)
-        } else if bearish_ratio > 0.5 && bearish_ratio > bullish_ratio * 2.0 {
-            (Direction::Short, 0.5 + avg_relevance * 0.3)
-        } else {
-            (Direction::Neutral, 0.5)
-        };
-
-        Signal::new(direction, confidence, "news", &summary)
-    }
-}
-
-/// Truncate string to max length
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len - 3])
     }
 }
 
 #[async_trait]
-impl Agent for NewsAgent {
+impl DataCollector for NewsAgent {
     fn name(&self) -> &str {
         "news"
     }
 
-    async fn analyze(&self) -> Result<Signal> {
+    async fn collect(&self) -> Result<Value> {
         let items = self.get_news().await;
-        Ok(self.analyze_news(&items))
+        let now = Utc::now();
+        let headlines: Vec<Value> = items
+            .iter()
+            .map(|i| {
+                let age_min = i
+                    .published
+                    .map(|p| (now - p).num_minutes())
+                    .unwrap_or(-1);
+                json!({
+                    "title": i.title,
+                    "source": i.source,
+                    "minutes_ago": age_min,
+                })
+            })
+            .collect();
+
+        Ok(json!({
+            "headlines": headlines,
+            "count": items.len(),
+            "lookback_hours": self.config.max_age_hours,
+        }))
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+fn extract_tag(xml: &str, tag: &str) -> Option<String> {
+    let start_tag = format!("<{}>", tag);
+    let cdata_start = format!("<{}><![CDATA[", tag);
+    let end_tag = format!("</{}>", tag);
 
-    #[test]
-    fn test_sentiment_bullish() {
-        let agent = NewsAgent::with_defaults();
-        let (sentiment, relevance) = agent.analyze_text("Bitcoin ETF approved, market surges to all-time high");
-        assert_eq!(sentiment, Sentiment::Bullish);
-        assert!(relevance > 0.3);
+    if let Some(start) = xml.find(&cdata_start) {
+        let content_start = start + cdata_start.len();
+        if let Some(end) = xml[content_start..].find("]]>") {
+            return Some(xml[content_start..content_start + end].trim().to_string());
+        }
     }
 
-    #[test]
-    fn test_sentiment_bearish() {
-        let agent = NewsAgent::with_defaults();
-        let (sentiment, _) = agent.analyze_text("Crypto exchange hacked, Bitcoin crashes in panic sell-off");
-        assert_eq!(sentiment, Sentiment::Bearish);
+    if let Some(start) = xml.find(&start_tag) {
+        let content_start = start + start_tag.len();
+        if let Some(end) = xml[content_start..].find(&end_tag) {
+            let content = &xml[content_start..content_start + end];
+            let clean = content
+                .trim()
+                .trim_start_matches("<![CDATA[")
+                .trim_end_matches("]]>")
+                .trim();
+            return Some(clean.to_string());
+        }
     }
+    None
+}
 
-    #[test]
-    fn test_truncate() {
-        assert_eq!(truncate("Hello World", 20), "Hello World");
-        assert_eq!(truncate("Hello World This Is Long", 15), "Hello World ...");
+fn parse_rss_date(date_str: &str) -> Option<DateTime<Utc>> {
+    if let Ok(dt) = DateTime::parse_from_rfc2822(date_str) {
+        return Some(dt.with_timezone(&Utc));
     }
+    if let Ok(dt) = DateTime::parse_from_rfc3339(date_str) {
+        return Some(dt.with_timezone(&Utc));
+    }
+    None
 }

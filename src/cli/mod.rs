@@ -104,10 +104,6 @@ pub struct DaemonArgs {
     #[arg(long)]
     pub live: bool,
 
-    /// Minimum confidence threshold (0.0-1.0)
-    #[arg(long, default_value = "0.8")]
-    pub min_confidence: f64,
-
     /// Maximum position size in USD
     #[arg(long, default_value = "10")]
     pub max_position: u64,
@@ -128,21 +124,9 @@ pub struct DaemonArgs {
     #[arg(long, default_value = "3")]
     pub trailing_stop: f64,
 
-    /// Agents to enable (comma-separated: pattern,macro,news,flow)
+    /// Collectors to enable (comma-separated: pattern,flow,macro,news,whale)
     #[arg(short, long, value_delimiter = ',', default_value = "pattern,flow")]
     pub agents: Vec<String>,
-
-    /// Reversal cooldown in seconds (prevents rapid flip-flopping)
-    #[arg(long, default_value = "300")]
-    pub reversal_cooldown: u64,
-
-    /// Conflict threshold (0.0-1.0) - skip if agents disagree by less than this
-    #[arg(long, default_value = "0.3")]
-    pub conflict_threshold: f64,
-
-    /// Minimum ATR% to trade (volatility filter) - skip if ATR < threshold (e.g., 0.1 = 0.1%)
-    #[arg(long, default_value = "0.1")]
-    pub min_atr: f64,
 }
 
 /// Arguments for the stats command

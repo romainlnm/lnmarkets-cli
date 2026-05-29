@@ -566,7 +566,6 @@ impl App {
             .get(2)
             .map(|f| f.value.clone())
             .unwrap_or("dry".into());
-        let min_c = fields.get(3).and_then(|f| f.as_f64()).unwrap_or(0.7);
         let max_p = fields.get(4).and_then(|f| f.as_u64()).unwrap_or(10);
         let lev = fields.get(5).and_then(|f| f.as_u32()).unwrap_or(10);
         let mode = match mode_s.to_lowercase().as_str() {
@@ -578,16 +577,12 @@ impl App {
         let dcfg = crate::daemon::DaemonConfig {
             interval_secs: interval,
             mode,
-            min_confidence: min_c,
             max_position_usd: max_p,
             leverage: lev,
             take_profit_pct: Some(5.0),
             stop_loss_pct: Some(3.0),
-            trailing_stop_pct: Some(3.0), // 3% trailing stop by default
+            trailing_stop_pct: Some(3.0),
             agents: agents.clone(),
-            reversal_cooldown_secs: 300, // 5 minute cooldown
-            conflict_threshold: 0.3,     // Skip if agents disagree by <30%
-            min_atr_pct: None,           // ATR filter disabled in TUI for now
         };
         let client = if mode == crate::daemon::TradingMode::Live {
             let cfg = crate::config::Config::load().unwrap_or_default();
@@ -606,9 +601,15 @@ impl App {
             "Daemon started ({})",
             mode_s
         )));
-        let d = crate::daemon::Daemon::new(dcfg, client);
-        tokio::spawn(async move {
-            let _ = d.run().await;
-        });
+        match crate::daemon::Daemon::new(dcfg, client) {
+            Ok(d) => {
+                tokio::spawn(async move {
+                    let _ = d.run().await;
+                });
+            }
+            Err(e) => {
+                self.notify(Notification::error(format!("Daemon: {}", e)));
+            }
+        }
     }
 }

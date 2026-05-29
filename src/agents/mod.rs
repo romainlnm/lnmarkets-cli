@@ -1,17 +1,24 @@
-//! Trading agents module
+//! Data-collecting agents.
 //!
-//! Each agent analyzes a specific data source and produces trading signals.
+//! Each agent gathers structured observations from one data source (price
+//! action, order flow, calendar, news, whale positions). The LLM arbiter
+//! (`llm::LlmArbiter`) interprets all of them together and makes the trade
+//! decision. The agents themselves no longer score Long/Short.
+//!
+//! See issue #16.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-pub mod pattern;
+pub mod flow;
+pub mod llm;
 pub mod macro_cal;
 pub mod news;
-pub mod flow;
+pub mod pattern;
 pub mod whale;
 
-/// Trading direction
+/// Trade side, used by execution code and the arbiter's decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Direction {
     Long,
@@ -29,106 +36,13 @@ impl std::fmt::Display for Direction {
     }
 }
 
-/// Signal produced by an agent
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Signal {
-    /// Trading direction recommendation
-    pub direction: Direction,
-    /// Confidence level (0.0 to 1.0)
-    pub confidence: f64,
-    /// Agent that produced this signal
-    pub source: String,
-    /// Human-readable reasoning
-    pub reasoning: String,
-    /// Timestamp of the signal
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    /// ATR percentage (volatility indicator) - only set by pattern agent
-    #[serde(default)]
-    pub atr_pct: Option<f64>,
-}
-
-impl Signal {
-    pub fn new(direction: Direction, confidence: f64, source: &str, reasoning: &str) -> Self {
-        Self {
-            direction,
-            confidence: confidence.clamp(0.0, 1.0),
-            source: source.to_string(),
-            reasoning: reasoning.to_string(),
-            timestamp: chrono::Utc::now(),
-            atr_pct: None,
-        }
-    }
-
-    pub fn with_atr(direction: Direction, confidence: f64, source: &str, reasoning: &str, atr_pct: f64) -> Self {
-        Self {
-            direction,
-            confidence: confidence.clamp(0.0, 1.0),
-            source: source.to_string(),
-            reasoning: reasoning.to_string(),
-            timestamp: chrono::Utc::now(),
-            atr_pct: Some(atr_pct),
-        }
-    }
-
-    pub fn neutral(source: &str, reasoning: &str) -> Self {
-        Self::new(Direction::Neutral, 0.5, source, reasoning)
-    }
-}
-
-/// Trait for trading agents
+/// Trait for agents that collect structured observations.
+///
+/// The return value is intentionally `serde_json::Value` so each collector
+/// can shape its output without dragging schema decisions into a shared type.
+/// The LLM prompt renders whatever each collector returns.
 #[async_trait]
-pub trait Agent: Send + Sync {
-    /// Agent name for logging and identification
+pub trait DataCollector: Send + Sync {
     fn name(&self) -> &str;
-
-    /// Analyze current market conditions and produce a signal
-    async fn analyze(&self) -> anyhow::Result<Signal>;
-
-    /// Initialize the agent (connect to data sources, etc.)
-    async fn init(&mut self) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    /// Cleanup resources
-    async fn shutdown(&mut self) -> anyhow::Result<()> {
-        Ok(())
-    }
-}
-
-/// Registry of available agents
-pub struct AgentRegistry {
-    agents: Vec<Box<dyn Agent>>,
-}
-
-impl AgentRegistry {
-    pub fn new() -> Self {
-        Self { agents: Vec::new() }
-    }
-
-    pub fn register(&mut self, agent: Box<dyn Agent>) {
-        self.agents.push(agent);
-    }
-
-    pub fn agents(&self) -> &[Box<dyn Agent>] {
-        &self.agents
-    }
-
-    pub async fn analyze_all(&self) -> Vec<Signal> {
-        let mut signals = Vec::new();
-        for agent in &self.agents {
-            match agent.analyze().await {
-                Ok(signal) => signals.push(signal),
-                Err(e) => {
-                    eprintln!("[{}] Analysis failed: {}", agent.name(), e);
-                }
-            }
-        }
-        signals
-    }
-}
-
-impl Default for AgentRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
+    async fn collect(&self) -> anyhow::Result<Value>;
 }

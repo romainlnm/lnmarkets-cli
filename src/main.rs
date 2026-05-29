@@ -98,16 +98,12 @@ async fn run() -> Result<()> {
             let daemon_config = DaemonConfig {
                 interval_secs: args.interval,
                 mode,
-                min_confidence: args.min_confidence,
                 max_position_usd: args.max_position,
                 leverage: args.leverage,
                 take_profit_pct: Some(args.take_profit),
                 stop_loss_pct: Some(args.stop_loss),
                 trailing_stop_pct: Some(args.trailing_stop),
                 agents: args.agents.clone(),
-                reversal_cooldown_secs: args.reversal_cooldown,
-                conflict_threshold: args.conflict_threshold,
-                min_atr_pct: Some(args.min_atr),
             };
 
             // Only load client for live trading
@@ -118,7 +114,7 @@ async fn run() -> Result<()> {
                 None
             };
 
-            let daemon = Daemon::new(daemon_config, client);
+            let daemon = Daemon::new(daemon_config, client)?;
             daemon.run().await?;
         }
 
