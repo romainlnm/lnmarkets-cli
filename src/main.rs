@@ -108,6 +108,7 @@ async fn run() -> Result<()> {
                 reversal_cooldown_secs: args.reversal_cooldown,
                 conflict_threshold: args.conflict_threshold,
                 min_atr_pct: Some(args.min_atr),
+                llm_enabled: args.llm,
             };
 
             // Only load client for live trading

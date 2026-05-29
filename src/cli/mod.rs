@@ -143,6 +143,11 @@ pub struct DaemonArgs {
     /// Minimum ATR% to trade (volatility filter) - skip if ATR < threshold (e.g., 0.1 = 0.1%)
     #[arg(long, default_value = "0.1")]
     pub min_atr: f64,
+
+    /// Use Claude as the trade decider instead of the heuristic aggregator.
+    /// Requires ANTHROPIC_API_KEY. Model overridable via ANTHROPIC_MODEL.
+    #[arg(long)]
+    pub llm: bool,
 }
 
 /// Arguments for the stats command

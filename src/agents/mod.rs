@@ -5,10 +5,11 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-pub mod pattern;
+pub mod flow;
+pub mod llm;
 pub mod macro_cal;
 pub mod news;
-pub mod flow;
+pub mod pattern;
 pub mod whale;
 
 /// Trading direction

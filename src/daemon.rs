@@ -2,6 +2,7 @@
 //!
 //! Runs agents in a loop, combines signals, and optionally executes trades.
 
+use crate::agents::llm::{LlmArbiter, LlmDecision, MarketSnapshot, PositionBrief};
 use crate::agents::{pattern::PatternAgent, macro_cal::MacroAgent, news::NewsAgent, flow::FlowAgent, whale::WhaleAgent, Agent, AgentRegistry, Direction, Signal};
 use crate::api::LnmClient;
 use crate::stats::save_trade_id;
@@ -49,6 +50,8 @@ pub struct DaemonConfig {
     pub conflict_threshold: f64,
     /// Minimum ATR% to trade (volatility filter) - None = disabled
     pub min_atr_pct: Option<f64>,
+    /// Use Claude as the trade decider instead of the heuristic aggregator.
+    pub llm_enabled: bool,
 }
 
 impl Default for DaemonConfig {
@@ -66,6 +69,7 @@ impl Default for DaemonConfig {
             reversal_cooldown_secs: 300, // 5 minutes default
             conflict_threshold: 0.3,     // Skip if agents disagree by >30%
             min_atr_pct: Some(0.1),      // 0.1% ATR minimum by default
+            llm_enabled: false,          // Use heuristic aggregator unless --llm is set
         }
     }
 }
@@ -114,6 +118,8 @@ pub struct Daemon {
     last_reversal_time: RwLock<Option<DateTime<Utc>>>,
     /// Peak ROE achieved in current position (for trailing stop)
     peak_roe: RwLock<Option<f64>>,
+    /// Optional LLM arbiter — replaces the heuristic decide() when set.
+    llm: Option<LlmArbiter>,
 }
 
 impl Daemon {
@@ -144,6 +150,21 @@ impl Daemon {
             }
         }
 
+        let llm = if config.llm_enabled {
+            match LlmArbiter::from_env() {
+                Ok(arb) => {
+                    println!("  LLM arbiter enabled (model: {})", arb.model_name());
+                    Some(arb)
+                }
+                Err(e) => {
+                    eprintln!("  \x1b[33m[WARN]\x1b[0m --llm requested but disabled: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Self {
             config,
             registry,
@@ -157,6 +178,7 @@ impl Daemon {
             }),
             last_reversal_time: RwLock::new(None),
             peak_roe: RwLock::new(None),
+            llm,
         }
     }
 
@@ -512,8 +534,14 @@ impl Daemon {
                 None
             };
 
-            // Combine signals and decide
-            if let Some(action) = self.decide(&signals) {
+            // Combine signals and decide — LLM arbiter when --llm is set, otherwise
+            // the heuristic weighted-vote aggregator.
+            let action = if let Some(ref llm) = self.llm {
+                self.decide_via_llm(llm, &signals, current_position.as_ref()).await
+            } else {
+                self.decide(&signals)
+            };
+            if let Some(action) = action {
                 self.execute_action(action, current_position.as_ref()).await;
             }
 
@@ -723,6 +751,82 @@ impl Daemon {
             reasons: signals.iter().map(|s| s.reasoning.clone()).collect(),
         })
     }
+
+    /// LLM arbiter path. Builds a market snapshot, asks Claude for the call,
+    /// converts the decision to a TradeAction. Logs the reasoning either way.
+    /// On API failure, logs a warning and skips the cycle (returns None).
+    async fn decide_via_llm(
+        &self,
+        llm: &LlmArbiter,
+        signals: &[Signal],
+        current_position: Option<&CrossPosition>,
+    ) -> Option<TradeAction> {
+        let price = match self.get_current_price().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("  \x1b[33m[LLM]\x1b[0m no price available: {}", e);
+                return None;
+            }
+        };
+
+        let position_brief = current_position.map(|p| PositionBrief {
+            side: p.side,
+            size_usd: p.quantity,
+            entry_price: p.entry_price,
+            pl_pct: p.pl_pct,
+        });
+
+        // 24h / 1h price change pulled from the pattern agent's reasoning when
+        // it ran — fall back to None when unavailable. The signals themselves
+        // carry the meaningful context for the prompt.
+        let snapshot = MarketSnapshot {
+            price,
+            change_24h_pct: None,
+            change_1h_pct: None,
+            funding_rate: None,
+            signals,
+            current_position: position_brief.as_ref(),
+            max_position_usd: self.config.max_position_usd,
+            leverage: self.config.leverage,
+            mode: match self.config.mode {
+                TradingMode::Live => "live",
+                TradingMode::Paper => "paper",
+                TradingMode::DryRun => "dry_run",
+            },
+        };
+
+        let decision: LlmDecision = match llm.decide(&snapshot).await {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("  \x1b[33m[LLM]\x1b[0m skip cycle: {}", e);
+                return None;
+            }
+        };
+
+        println!(
+            "  \x1b[35m[LLM]\x1b[0m {:?} ({:.0}%, size {:.0}%): {}",
+            decision.action,
+            decision.confidence * 100.0,
+            decision.position_pct * 100.0,
+            decision.reasoning
+        );
+
+        let direction = decision.direction();
+        if direction == Direction::Neutral {
+            // Hold or close — TP/SL / reversal handles real exits today.
+            return None;
+        }
+
+        let position_usd = ((self.config.max_position_usd as f64 * decision.position_pct) as u64).max(1);
+
+        Some(TradeAction {
+            direction,
+            confidence: decision.confidence,
+            position_usd,
+            reasons: vec![decision.reasoning],
+        })
+    }
+
 
     /// Execute a trading action
     async fn execute_action(&self, action: TradeAction, current_position: Option<&CrossPosition>) {
