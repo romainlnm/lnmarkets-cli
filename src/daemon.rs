@@ -2,7 +2,17 @@
 //!
 //! Runs agents in a loop, combines signals, and optionally executes trades.
 
-use crate::agents::{pattern::PatternAgent, macro_cal::MacroAgent, news::NewsAgent, flow::FlowAgent, whale::WhaleAgent, Agent, AgentRegistry, Direction, Signal};
+use std::collections::BTreeMap;
+
+use crate::agents::{
+    flow::FlowAgent,
+    llm::{LlmArbiter, LlmAction, LlmDecision, MarketSnapshot, PositionBrief},
+    macro_cal::MacroAgent,
+    news::NewsAgent,
+    pattern::PatternAgent,
+    whale::WhaleAgent,
+    DataCollector, Direction,
+};
 use crate::api::LnmClient;
 use crate::stats::save_trade_id;
 use anyhow::Result;
@@ -22,33 +32,22 @@ pub enum TradingMode {
     Live,
 }
 
-/// Daemon configuration
+/// Daemon configuration.
+///
+/// Decision-shaping knobs (min confidence, conflict / reversal / ATR thresholds)
+/// are gone — the LLM arbiter handles all of those contextually now. What
+/// remains is the operational envelope: how often to think, what mode to run
+/// in, hard exit thresholds, position sizing ceiling.
 #[derive(Debug, Clone)]
 pub struct DaemonConfig {
-    /// Analysis interval in seconds
     pub interval_secs: u64,
-    /// Trading mode
     pub mode: TradingMode,
-    /// Minimum confidence to act
-    pub min_confidence: f64,
-    /// Maximum position size in USD
     pub max_position_usd: u64,
-    /// Leverage (1-100)
     pub leverage: u32,
-    /// Take profit percentage (e.g., 5.0 = 5%)
     pub take_profit_pct: Option<f64>,
-    /// Stop loss percentage (e.g., 3.0 = 3%)
     pub stop_loss_pct: Option<f64>,
-    /// Trailing stop percentage - close if ROE drops this much from peak (e.g., 3.0 = 3%)
     pub trailing_stop_pct: Option<f64>,
-    /// Enabled agents
     pub agents: Vec<String>,
-    /// Cooldown period after reversal (in seconds)
-    pub reversal_cooldown_secs: u64,
-    /// Conflict threshold - skip if agents disagree by more than this (0.0-1.0)
-    pub conflict_threshold: f64,
-    /// Minimum ATR% to trade (volatility filter) - None = disabled
-    pub min_atr_pct: Option<f64>,
 }
 
 impl Default for DaemonConfig {
@@ -56,16 +55,12 @@ impl Default for DaemonConfig {
         Self {
             interval_secs: 60,
             mode: TradingMode::DryRun,
-            min_confidence: 0.8,
             max_position_usd: 10,
             leverage: 10,
             take_profit_pct: Some(10.0),
             stop_loss_pct: Some(5.0),
-            trailing_stop_pct: Some(3.0),  // 3% from peak by default
-            agents: vec!["pattern".to_string()],
-            reversal_cooldown_secs: 300, // 5 minutes default
-            conflict_threshold: 0.3,     // Skip if agents disagree by >30%
-            min_atr_pct: Some(0.1),      // 0.1% ATR minimum by default
+            trailing_stop_pct: Some(3.0),
+            agents: vec!["pattern".to_string(), "flow".to_string()],
         }
     }
 }
@@ -105,48 +100,39 @@ struct PaperState {
     losses: u32,
 }
 
-/// Trading daemon
+/// Trading daemon. The arbiter is the sole decision maker; collectors only
+/// supply the data it reads.
 pub struct Daemon {
     config: DaemonConfig,
-    registry: AgentRegistry,
+    collectors: Vec<Box<dyn DataCollector>>,
+    arbiter: LlmArbiter,
     client: Option<LnmClient>,
     paper_state: RwLock<PaperState>,
-    last_reversal_time: RwLock<Option<DateTime<Utc>>>,
-    /// Peak ROE achieved in current position (for trailing stop)
+    /// Peak ROE achieved in current position (for trailing stop).
     peak_roe: RwLock<Option<f64>>,
 }
 
 impl Daemon {
-    pub fn new(config: DaemonConfig, client: Option<LnmClient>) -> Self {
-        let mut registry = AgentRegistry::new();
-
-        // Register enabled agents
+    /// Build a daemon. Returns Err if the LLM arbiter can't be initialized
+    /// (e.g. ANTHROPIC_API_KEY is missing) — the daemon can't run without it.
+    pub fn new(config: DaemonConfig, client: Option<LnmClient>) -> Result<Self> {
+        let arbiter = LlmArbiter::from_env()?;
+        let mut collectors: Vec<Box<dyn DataCollector>> = Vec::new();
         for agent_name in &config.agents {
             match agent_name.as_str() {
-                "pattern" => {
-                    registry.register(Box::new(PatternAgent::with_defaults()));
-                }
-                "macro" => {
-                    registry.register(Box::new(MacroAgent::with_defaults()));
-                }
-                "news" => {
-                    registry.register(Box::new(NewsAgent::with_defaults()));
-                }
-                "flow" => {
-                    registry.register(Box::new(FlowAgent::with_defaults()));
-                }
-                "whale" => {
-                    registry.register(Box::new(WhaleAgent::with_defaults()));
-                }
-                _ => {
-                    eprintln!("Unknown agent: {}", agent_name);
-                }
+                "pattern" => collectors.push(Box::new(PatternAgent::with_defaults())),
+                "macro" => collectors.push(Box::new(MacroAgent::with_defaults())),
+                "news" => collectors.push(Box::new(NewsAgent::with_defaults())),
+                "flow" => collectors.push(Box::new(FlowAgent::with_defaults())),
+                "whale" => collectors.push(Box::new(WhaleAgent::with_defaults())),
+                other => eprintln!("Unknown collector: {}", other),
             }
         }
 
-        Self {
+        Ok(Self {
             config,
-            registry,
+            collectors,
+            arbiter,
             client,
             paper_state: RwLock::new(PaperState {
                 trades: Vec::new(),
@@ -155,9 +141,8 @@ impl Daemon {
                 wins: 0,
                 losses: 0,
             }),
-            last_reversal_time: RwLock::new(None),
             peak_roe: RwLock::new(None),
-        }
+        })
     }
 
     /// Fetch current BTC price from Binance (for agents)
@@ -396,7 +381,7 @@ impl Daemon {
         println!("Starting LN Markets trading daemon...");
         println!("  Mode: {}", mode_str);
         println!("  Interval: {}s", self.config.interval_secs);
-        println!("  Min confidence: {:.0}%", self.config.min_confidence * 100.0);
+        println!("  Arbiter: {} (Claude)", self.arbiter.model_name());
         println!("  Max position: ${} USD", self.config.max_position_usd);
         println!("  Leverage: {}x", self.config.leverage);
         if let Some(tp) = self.config.take_profit_pct {
@@ -408,12 +393,10 @@ impl Daemon {
         if let Some(trail) = self.config.trailing_stop_pct {
             println!("  Trailing stop: {:.1}% from peak", trail);
         }
-        println!("  Reversal cooldown: {}s", self.config.reversal_cooldown_secs);
-        println!("  Conflict threshold: {:.0}%", self.config.conflict_threshold * 100.0);
-        if let Some(min_atr) = self.config.min_atr_pct {
-            println!("  Min ATR: {:.2}% (volatility filter)", min_atr);
-        }
-        println!("  Agents: {:?}", self.config.agents);
+        println!(
+            "  Collectors: {:?}",
+            self.collectors.iter().map(|c| c.name()).collect::<Vec<_>>()
+        );
         println!();
 
         // Set cross margin leverage at startup (Live mode only)
@@ -483,37 +466,29 @@ impl Daemon {
                 self.check_paper_positions().await;
             }
 
-            // Collect signals from all agents
-            let signals = self.registry.analyze_all().await;
-
-            if signals.is_empty() {
-                println!("  No signals received");
-                continue;
+            // Collect raw observations from every enabled collector (in parallel
+            // would be ideal — for v1 do them sequentially, the cost is bounded
+            // by network IO not CPU).
+            let mut agent_data: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+            for c in &self.collectors {
+                match c.collect().await {
+                    Ok(v) => {
+                        agent_data.insert(c.name().to_string(), v);
+                    }
+                    Err(e) => {
+                        eprintln!("  [{}] collector failed: {}", c.name(), e);
+                    }
+                }
             }
 
-            // Print signals
-            for signal in &signals {
-                let conf_pct = signal.confidence * 100.0;
-                let icon = match signal.direction {
-                    Direction::Long => "\x1b[32m▲\x1b[0m",
-                    Direction::Short => "\x1b[31m▼\x1b[0m",
-                    Direction::Neutral => "\x1b[33m●\x1b[0m",
-                };
-                println!(
-                    "  {} [{}] {} ({:.0}%): {}",
-                    icon, signal.source, signal.direction, conf_pct, signal.reasoning
-                );
-            }
-
-            // Get current position for signal reversal check
             let current_position = if self.config.mode == TradingMode::Live {
                 self.get_cross_position().await
             } else {
                 None
             };
 
-            // Combine signals and decide
-            if let Some(action) = self.decide(&signals) {
+            if let Some(action) = self.decide_via_llm(&agent_data, current_position.as_ref()).await
+            {
                 self.execute_action(action, current_position.as_ref()).await;
             }
 
@@ -630,97 +605,83 @@ impl Daemon {
         );
     }
 
-    /// Decide on trading action based on combined signals
-    fn decide(&self, signals: &[Signal]) -> Option<TradeAction> {
-        if signals.is_empty() {
-            return None;
-        }
-
-        // Check ATR volatility filter (from pattern agent)
-        if let Some(min_atr) = self.config.min_atr_pct {
-            if let Some(pattern_signal) = signals.iter().find(|s| s.source == "pattern") {
-                if let Some(atr_pct) = pattern_signal.atr_pct {
-                    if atr_pct < min_atr {
-                        println!(
-                            "  \x1b[33m→ LOW VOLATILITY: ATR {:.2}% < {:.2}% threshold, skipping\x1b[0m",
-                            atr_pct, min_atr
-                        );
-                        return None;
-                    }
-                }
-            }
-        }
-
-        // Calculate weighted direction
-        let mut long_weight = 0.0;
-        let mut short_weight = 0.0;
-        let mut long_count = 0;
-        let mut short_count = 0;
-        let mut max_long_conf = 0.0f64;
-        let mut max_short_conf = 0.0f64;
-
-        for signal in signals {
-            match signal.direction {
-                Direction::Long => {
-                    long_weight += signal.confidence;
-                    long_count += 1;
-                    max_long_conf = max_long_conf.max(signal.confidence);
-                }
-                Direction::Short => {
-                    short_weight += signal.confidence;
-                    short_count += 1;
-                    max_short_conf = max_short_conf.max(signal.confidence);
-                }
-                Direction::Neutral => {}
-            }
-        }
-
-        // Need at least one directional signal
-        if long_count == 0 && short_count == 0 {
-            return None;
-        }
-
-        // Conflict detection: if both sides have high-confidence signals, skip
-        // This prevents whipsawing when agents strongly disagree
-        if max_long_conf >= self.config.min_confidence && max_short_conf >= self.config.min_confidence {
-            let conflict = (max_long_conf - max_short_conf).abs();
-            if conflict <= self.config.conflict_threshold {
-                println!(
-                    "  \x1b[33m→ CONFLICT: Agents disagree (LONG {:.0}% vs SHORT {:.0}%), skipping\x1b[0m",
-                    max_long_conf * 100.0,
-                    max_short_conf * 100.0
-                );
+    /// Send the snapshot to Claude, return a TradeAction (or None to skip).
+    /// On API failure, warn + skip — never trade blind.
+    async fn decide_via_llm(
+        &self,
+        agent_data: &BTreeMap<String, serde_json::Value>,
+        current_position: Option<&CrossPosition>,
+    ) -> Option<TradeAction> {
+        let price = match self.get_current_price().await {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("  \x1b[33m[LLM]\x1b[0m no price available: {}", e);
                 return None;
             }
-        }
-
-        // Direction and confidence based on winning side only
-        let (direction, confidence) = if long_weight > short_weight {
-            (Direction::Long, long_weight / long_count as f64)
-        } else if short_weight > long_weight {
-            (Direction::Short, short_weight / short_count as f64)
-        } else {
-            return None;
         };
 
-        if confidence < self.config.min_confidence {
-            println!(
-                "  → Confidence {:.0}% below threshold {:.0}%, no action",
-                confidence * 100.0,
-                self.config.min_confidence * 100.0
-            );
+        let position_brief = current_position.map(|p| PositionBrief {
+            side: p.side,
+            size_usd: p.quantity,
+            entry_price: p.entry_price,
+            pl_pct: p.pl_pct,
+        });
+
+        let snapshot = MarketSnapshot {
+            price,
+            agent_data,
+            current_position: position_brief.as_ref(),
+            max_position_usd: self.config.max_position_usd,
+            leverage: self.config.leverage,
+            mode: match self.config.mode {
+                TradingMode::Live => "live",
+                TradingMode::Paper => "paper",
+                TradingMode::DryRun => "dry_run",
+            },
+        };
+
+        let decision: LlmDecision = match self.arbiter.decide(&snapshot).await {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("  \x1b[33m[LLM]\x1b[0m skip cycle: {}", e);
+                return None;
+            }
+        };
+
+        let action_label = match decision.action {
+            LlmAction::OpenLong => "OPEN_LONG",
+            LlmAction::OpenShort => "OPEN_SHORT",
+            LlmAction::Close => "CLOSE",
+            LlmAction::Hold => "HOLD",
+        };
+        println!(
+            "  \x1b[35m[LLM]\x1b[0m {} ({:.0}%, size {:.0}%): {}",
+            action_label,
+            decision.confidence * 100.0,
+            decision.position_pct * 100.0,
+            decision.reasoning
+        );
+
+        // Explicit close: hit the close path directly, don't open anything.
+        if decision.action == LlmAction::Close {
+            if current_position.is_some() && self.config.mode == TradingMode::Live {
+                let _ = self.close_cross_position("LLM close").await;
+            }
             return None;
         }
 
-        // Calculate position size based on confidence (in USD)
-        let size_factor = (confidence - self.config.min_confidence) / (1.0 - self.config.min_confidence);
-        let position_usd = ((self.config.max_position_usd as f64 * size_factor * 0.5) as u64).max(1);
+        let direction = decision.direction();
+        if direction == Direction::Neutral {
+            return None;
+        }
 
+        let position_usd =
+            ((self.config.max_position_usd as f64 * decision.position_pct) as u64).max(1);
         Some(TradeAction {
             direction,
-            confidence,
+            confidence: decision.confidence,
             position_usd,
-            reasons: signals.iter().map(|s| s.reasoning.clone()).collect(),
+            reasons: vec![decision.reasoning],
         })
     }
 
@@ -732,49 +693,18 @@ impl Daemon {
             Direction::Neutral => return,
         };
 
-        // Check for signal reversal (position is opposite to new signal)
+        // Position vs new action handling. No more reversal premium / cooldown —
+        // the LLM is responsible for deciding when to reverse.
         if let Some(pos) = current_position {
             let is_reversal = (pos.side == Direction::Long && action.direction == Direction::Short)
                 || (pos.side == Direction::Short && action.direction == Direction::Long);
-
             if is_reversal {
-                // Require extra confidence for reversals to cover double trading fees
-                let reversal_min_confidence = self.config.min_confidence + 0.10;
-                if action.confidence < reversal_min_confidence {
-                    println!(
-                        "  \x1b[33m→ REVERSAL BLOCKED: {:.0}% confidence < {:.0}% required (+10% fee premium)\x1b[0m",
-                        action.confidence * 100.0, reversal_min_confidence * 100.0
-                    );
-                    return;
-                }
-
-                // Check reversal cooldown
-                let last_reversal = self.last_reversal_time.read().await;
-                if let Some(last_time) = *last_reversal {
-                    let elapsed = (Utc::now() - last_time).num_seconds() as u64;
-                    if elapsed < self.config.reversal_cooldown_secs {
-                        let remaining = self.config.reversal_cooldown_secs - elapsed;
-                        println!(
-                            "  \x1b[33m→ COOLDOWN: Reversal blocked ({:.0}s remaining)\x1b[0m",
-                            remaining
-                        );
-                        return;
-                    }
-                }
-                drop(last_reversal);
-
                 println!(
-                    "  \x1b[33m→ REVERSAL: {} → {} ({:.0}% confidence)\x1b[0m",
-                    pos.side, action.direction, action.confidence * 100.0
+                    "  \x1b[33m→ REVERSAL: {} → {}\x1b[0m",
+                    pos.side, action.direction
                 );
-                // Close current position first (cross margin will net out)
-                let _ = self.close_cross_position("Signal reversal").await;
-
-                // Update last reversal time
-                let mut last_reversal = self.last_reversal_time.write().await;
-                *last_reversal = Some(Utc::now());
+                let _ = self.close_cross_position("LLM reversal").await;
             } else if pos.side == action.direction {
-                // Same direction - skip to avoid adding to position
                 println!("  → Already {} - skipping", pos.side);
                 return;
             }
