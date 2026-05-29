@@ -29,6 +29,7 @@ Try these with your AI agent:
 - [Quick Start](#quick-start)
 - [Interactive TUI](#interactive-tui)
 - [MCP Server](#mcp-server)
+- [Alerts](#alerts)
 - [Trading Daemon](#trading-daemon)
 - [Stats Dashboard](#stats-dashboard)
 - [Treasury Integration](#treasury-integration-claw-cash)
@@ -227,6 +228,43 @@ On error:
   "isError": true
 }
 ```
+
+## Alerts
+
+Declare price and funding conditions in plain English. Get an OS-native notification (and a stdout line) when one is crossed. No polling — the watcher rides on the public ticker stream.
+
+```bash
+lnmarkets alert add "price > 200000"
+lnmarkets alert add "price < 180000"
+lnmarkets alert add "funding > 0.05%"
+lnmarkets alert add "funding < -0.02%"
+lnmarkets alert add "funding flips positive"
+lnmarkets alert add "funding flips negative"
+
+lnmarkets alert list
+lnmarkets alert remove <id>
+lnmarkets alert watch              # foreground, Ctrl+C to exit
+```
+
+### Rule grammar (v1)
+
+| Form | Example |
+|------|---------|
+| `price > N` / `price < N` | `price > 200000` (commas + `$` accepted) |
+| `funding > N%` / `funding < N%` | `funding > 0.05%` |
+| `funding flips positive` | fires when funding crosses from ≤ 0 to > 0 |
+| `funding flips negative` | fires when funding crosses from ≥ 0 to < 0 |
+
+### Behavior
+
+- **Threshold-crossing**: alerts fire on transition only — no spam while a condition keeps holding. A `price > 200000` rule fires once when crossing upward, stays silent above, and re-arms after the price drops back below.
+- **Storage**: rules persist in `<config-dir>/alerts.toml` as the original strings — edit by hand if you like, they're re-parsed on load.
+- **Notifications**: cross-platform via `notify-rust` — macOS Notification Center, Linux `notify-send`, Windows toast.
+- **Public stream only** for v1; no API key needed.
+
+### Coming later
+
+`--detach` background mode, webhook delivery per rule, position-aware rules (P&L, liquidation distance, lifecycle events).
 
 ## Trading Daemon
 
@@ -745,7 +783,7 @@ All sources are public APIs with no authentication required. Failed sources are 
 
 ## Commands
 
-10 MCP tools across 4 service groups. 31 CLI commands across 9 groups.
+10 MCP tools across 4 service groups. 35 CLI commands across 10 groups.
 
 | Group | CLI Commands | MCP Tools | Auth | Description |
 |-------|--------------|-----------|------|-------------|
@@ -755,6 +793,7 @@ All sources are public APIs with no authentication required. Failed sources are 
 | funding | 7 | 2 | Yes | Deposit, withdraw (Lightning & on-chain) |
 | auth | 4 | — | No | Login, logout, status |
 | tui | 1 | — | Optional | Interactive terminal dashboard |
+| alert | 4 | — | No | Price + funding alerts with OS notifications |
 | daemon | 1 | — | Optional | Automated trading with agents, treasury integration |
 | stats | 1 | — | No | Trading performance dashboard |
 | recap | 1 | — | No | 24-48h BTC market overview |
@@ -825,6 +864,15 @@ All sources are public APIs with no authentication required. Failed sources are 
 | Command | Description |
 |---------|-------------|
 | `lnmarkets recap` | 24-48h BTC market overview (price, derivatives, sentiment, calendar) |
+
+### Alerts (Public)
+
+| Command | Description |
+|---------|-------------|
+| `lnmarkets alert add "<rule>"` | Add a rule (e.g. `"price > 200000"`, `"funding flips negative"`) |
+| `lnmarkets alert list` | List configured rules |
+| `lnmarkets alert remove <id>` | Remove a rule by ID |
+| `lnmarkets alert watch` | Run the watcher in the foreground (Ctrl+C to exit) |
 
 </details>
 
