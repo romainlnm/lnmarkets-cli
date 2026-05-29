@@ -140,13 +140,16 @@ async fn run() -> Result<()> {
         }
 
         Commands::Tui(args) => {
-            let client = if config.has_credentials() {
-                let credentials = config.get_credentials();
-                LnmClient::new(network, Some(credentials)).ok()
-            } else {
+            let credentials_opt = config.has_credentials().then(|| config.get_credentials());
+            let client = credentials_opt
+                .as_ref()
+                .and_then(|c| LnmClient::new(network, Some(c.clone())).ok());
+            let stream_creds = if args.no_stream {
                 None
+            } else {
+                credentials_opt.and_then(|c| api::stream::StreamCredentials::from_config(&c))
             };
-            tui::run(args.refresh, client).await?;
+            tui::run(args.refresh, client, !args.no_stream, stream_creds).await?;
         }
 
 

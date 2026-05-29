@@ -1,4 +1,7 @@
 use super::popup::{Notification, Popup};
+use crate::api::stream::{
+    CrossOrderEvent, CrossPositionUpdate, IsolatedEvent, StreamStatus,
+};
 use crate::api::LnmClient;
 use crate::models::funding::{Deposit, Withdrawal};
 use crate::models::futures::{MarginType, Trade};
@@ -70,6 +73,7 @@ pub struct App {
     pub client: Option<LnmClient>,
     pub dark_theme: bool,
     pub use_testnet: bool,
+    pub stream_status: StreamStatus,
 }
 
 impl App {
@@ -96,6 +100,152 @@ impl App {
             client,
             dark_theme: true,
             use_testnet: false,
+            stream_status: StreamStatus::Disconnected,
+        }
+    }
+
+    /// Merge a Ticker pushed by the stream client into the current app state,
+    /// preserving the orderbook levels (`prices`) populated by REST polling — the
+    /// stream ticker channel doesn't carry them (they come from `buckets`).
+    /// Also feeds the price tape so the Dashboard chart moves in real time.
+    pub fn apply_stream_ticker(&mut self, mut next: Ticker) {
+        if let Some(existing) = &self.ticker {
+            if next.prices.is_empty() {
+                next.prices = existing.prices.clone();
+            }
+        }
+        if let Some(p) = next.last_price.or(Some(next.index)).filter(|v| *v > 0.0) {
+            self.push_price_tick(p);
+        }
+        self.ticker = Some(next);
+    }
+
+    /// Update isolated trade state from a streamed lifecycle event.
+    pub fn apply_isolated_event(&mut self, ev: IsolatedEvent) {
+        match ev {
+            IsolatedEvent::Open(t) => {
+                self.orders.retain(|o| o.id != t.id);
+                self.orders.insert(0, t);
+            }
+            IsolatedEvent::Filled(t) => {
+                self.orders.retain(|o| o.id != t.id);
+                self.positions.retain(|p| p.id != t.id);
+                self.positions.insert(0, t);
+            }
+            IsolatedEvent::Closed(c)
+            | IsolatedEvent::Liquidation(c)
+            | IsolatedEvent::Stoploss(c)
+            | IsolatedEvent::Takeprofit(c) => {
+                let mut existing: Option<Trade> = None;
+                self.positions.retain(|p| {
+                    if p.id == c.id {
+                        existing = Some(p.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+                if let Some(mut trade) = existing {
+                    trade.exit_price = c.exit_price.or(trade.exit_price);
+                    trade.pl = c.pl.or(trade.pl);
+                    trade.closed_at =
+                        Some(chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string());
+                    self.closed_trades.insert(0, trade);
+                    if self.closed_trades.len() > 50 {
+                        self.closed_trades.truncate(50);
+                    }
+                }
+            }
+            IsolatedEvent::Canceled { id } => {
+                self.orders.retain(|o| o.id != id);
+            }
+            IsolatedEvent::Funding {
+                id,
+                margin,
+                liquidation_price,
+            } => {
+                if let Some(p) = self.positions.iter_mut().find(|p| p.id == id) {
+                    p.margin = Some(margin);
+                    if liquidation_price > 0.0 {
+                        p.liquidation_price = Some(liquidation_price);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Update the cross-margin position card from a streamed position event.
+    pub fn apply_cross_position(&mut self, u: CrossPositionUpdate) {
+        if u.quantity == 0.0 {
+            self.positions.retain(|p| p.id != "cross");
+            return;
+        }
+        let side = if u.quantity > 0.0 { "buy" } else { "sell" };
+        if let Some(p) = self.positions.iter_mut().find(|p| p.id == "cross") {
+            p.side = side.to_string();
+            p.quantity = u.quantity.abs() as i64;
+            p.leverage = u.leverage;
+            p.margin = Some(u.margin);
+            p.entry_price = u.entry_price;
+            p.price = u.entry_price;
+            p.liquidation_price = u.liquidation;
+            p.pl = u.delta_pl;
+        } else {
+            let estimated_fee = (u.margin as f64 * 0.001) as i64;
+            let cross_trade = Trade {
+                id: "cross".to_string(),
+                user_id: None,
+                side: side.to_string(),
+                order_type: "market".to_string(),
+                quantity: u.quantity.abs() as i64,
+                leverage: u.leverage,
+                stop_loss: None,
+                take_profit: None,
+                price: u.entry_price,
+                entry_price: u.entry_price,
+                exit_price: None,
+                margin: Some(u.margin),
+                margin_with_cf: None,
+                pl: u.delta_pl,
+                liquidation_price: u.liquidation,
+                created_at: None,
+                open_at: None,
+                closed_at: None,
+                last_update: None,
+                margin_type: MarginType::Cross,
+                opening_fee: Some(estimated_fee),
+                sum_carry_fees: None,
+            };
+            self.positions.insert(0, cross_trade);
+        }
+    }
+
+    /// Cross-margin order events. Currently only used to nudge the History tab —
+    /// detailed cross-order rows still come in via REST polling.
+    pub fn apply_cross_order(&mut self, _ev: CrossOrderEvent) {}
+
+    pub fn apply_deposit(&mut self, d: Deposit) {
+        self.deposits.retain(|x| x.id != d.id);
+        self.deposits.insert(0, d);
+    }
+
+    pub fn apply_withdrawal(&mut self, w: Withdrawal) {
+        self.withdrawals.retain(|x| x.id != w.id);
+        self.withdrawals.insert(0, w);
+    }
+
+    const PRICE_TAPE_CAP: usize = 300;
+
+    fn push_price_tick(&mut self, price: f64) {
+        // Avoid pushing the exact same value twice in a row — keeps the chart from
+        // collecting flat segments when the WS resends the same price.
+        if self.price_history.last().map_or(false, |&p| (p - price).abs() < f64::EPSILON) {
+            return;
+        }
+        self.price_history.push(price);
+        if self.price_history.len() > Self::PRICE_TAPE_CAP {
+            let excess = self.price_history.len() - Self::PRICE_TAPE_CAP;
+            self.price_history.drain(0..excess);
         }
     }
     pub fn notify(&mut self, n: Notification) {

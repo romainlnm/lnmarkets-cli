@@ -239,25 +239,78 @@ fn dash(f: &mut Frame, a: &App, ar: Rect) {
             .style(Style::default().bg(b2(a))),
         top[1],
     );
-    // Sparkline
-    if !a.price_history.is_empty() {
-        let d: Vec<u64> = a.price_history.iter().map(|p| *p as u64).collect();
-        let (mn, mx) = (
-            d.iter().copied().min().unwrap_or(0),
-            d.iter().copied().max().unwrap_or(1),
-        );
-        let n: Vec<u64> = d
+    // Live BTC chart — fed by the stream ticker on every push.
+    if a.price_history.len() >= 2 {
+        let points: Vec<(f64, f64)> = a
+            .price_history
             .iter()
-            .map(|v| v.saturating_sub(mn.saturating_sub(100)))
+            .enumerate()
+            .map(|(i, p)| (i as f64, *p))
             .collect();
+        let mn = points.iter().map(|(_, y)| *y).fold(f64::INFINITY, f64::min);
+        let mx = points.iter().map(|(_, y)| *y).fold(f64::NEG_INFINITY, f64::max);
+        // Pad the y-range so the line never sits flush against the borders.
+        let pad = ((mx - mn).abs() * 0.08).max(1.0);
+        let y_min = mn - pad;
+        let y_max = mx + pad;
+        // Color the line by recent direction: green if last move up, red if down.
+        let trend_up = a
+            .price_history
+            .last()
+            .zip(a.price_history.get(a.price_history.len().saturating_sub(2)))
+            .map(|(last, prev)| last >= prev)
+            .unwrap_or(true);
+        let line_color = if trend_up { gr(a) } else { rd(a) };
+        let dataset = Dataset::default()
+            .name("BTC")
+            .marker(symbols::Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::default().fg(line_color))
+            .data(&points);
+        // Y-axis scale — labels distributed evenly between bounds. Use the padded
+        // bounds so labels align with the axis ticks, not the data extremes.
+        let y_mid = (y_min + y_max) / 2.0;
+        let axis_label_style = Style::default().fg(dm(a));
+        let y_labels = vec![
+            Span::styled(format!("${}", fp(y_min)), axis_label_style),
+            Span::styled(format!("${}", fp(y_mid)), axis_label_style),
+            Span::styled(format!("${}", fp(y_max)), axis_label_style),
+        ];
+        // Footer shows the live price prominently + the net change across the
+        // visible window (the L$/H$ stats now live on the y-axis itself).
+        let last_price = *a.price_history.last().unwrap_or(&0.0);
+        let first_price = *a.price_history.first().unwrap_or(&last_price);
+        let delta = last_price - first_price;
+        let delta_pct = if first_price > 0.0 { delta / first_price * 100.0 } else { 0.0 };
+        let delta_color = if delta >= 0.0 { gr(a) } else { rd(a) };
+        let sign = if delta >= 0.0 { "+" } else { "" };
         f.render_widget(
-            Sparkline::default()
-                .block(pb(a, " BTC ").title_bottom(Line::from(vec![
-                    Span::styled(format!(" L${} ", fp(mn as f64)), Style::default().fg(rd(a))),
-                    Span::styled(format!(" H${} ", fp(mx as f64)), Style::default().fg(gr(a))),
-                ])))
-                .data(&n)
-                .style(Style::default().fg(or(a)).bg(b2(a))),
+            Chart::new(vec![dataset])
+                .block(
+                    pb(a, " BTC ")
+                        .title_bottom(Line::from(vec![
+                            Span::styled(
+                                format!(" ${} ", fp(last_price)),
+                                Style::default().fg(line_color),
+                            ),
+                            Span::styled(
+                                format!("{}{:.2}% ", sign, delta_pct),
+                                Style::default().fg(delta_color),
+                            ),
+                        ])),
+                )
+                .x_axis(
+                    Axis::default()
+                        .style(axis_label_style)
+                        .bounds([0.0, (points.len().saturating_sub(1)) as f64]),
+                )
+                .y_axis(
+                    Axis::default()
+                        .style(axis_label_style)
+                        .bounds([y_min, y_max])
+                        .labels(y_labels),
+                )
+                .style(Style::default().bg(b2(a))),
             ch[1],
         );
     } else {
@@ -666,6 +719,20 @@ fn ftr(f: &mut Frame, a: &App, ar: Rect) {
         sp.push(Span::styled("L", Style::default().fg(yl(a)).bold()));
         sp.push(Span::styled(" login ", Style::default().fg(dm(a))));
     }
+    // Stream connection state indicator: colored dot + short label.
+    use crate::api::stream::StreamStatus;
+    let (dot_color, label) = match a.stream_status {
+        StreamStatus::Connected => (gr(a), "live"),
+        StreamStatus::Authenticated => (gr(a), "live ●●"),
+        StreamStatus::Connecting => (yl(a), "connecting"),
+        StreamStatus::Disconnected => (rd(a), "offline"),
+    };
+    sp.push(Span::styled(" │ ", Style::default().fg(dm(a))));
+    sp.push(Span::styled("●", Style::default().fg(dot_color).bold()));
+    sp.push(Span::styled(
+        format!(" {}", label),
+        Style::default().fg(dm(a)),
+    ));
     if !a.last_refresh.is_empty() {
         sp.push(Span::styled(
             format!(" │ ⟳ {}({}s)", a.last_refresh, a.refresh_secs),
