@@ -19,7 +19,11 @@ pub struct IndexEntry {
 #[derive(Subcommand)]
 pub enum MarketCommands {
     /// Get current ticker (bid, offer, index)
-    Ticker,
+    Ticker {
+        /// Watch live updates via the WebSocket stream (Ctrl+C to exit)
+        #[arg(long)]
+        watch: bool,
+    },
 
     /// Get price/index history
     Prices {
@@ -111,9 +115,14 @@ impl From<IndexEntry> for IndexRow {
 impl MarketCommands {
     pub async fn execute(&self, client: &LnmClient, format: OutputFormat) -> Result<()> {
         match self {
-            Self::Ticker => {
-                let ticker: Ticker = client.public_request(Method::GET, "futures/ticker").await?;
-                print_single(TickerRow::from(ticker), format)?;
+            Self::Ticker { watch } => {
+                let mut ticker: Ticker =
+                    client.public_request(Method::GET, "futures/ticker").await?;
+                if !watch {
+                    print_single(TickerRow::from(ticker), format)?;
+                } else {
+                    watch_ticker(&mut ticker, format).await?;
+                }
             }
 
             Self::Prices { from, to, limit } | Self::Index { from, to, limit } => {
@@ -168,4 +177,63 @@ impl MarketCommands {
 
         Ok(())
     }
+}
+
+/// Re-renders the ticker table in place on every WS push until Ctrl+C.
+/// Initial REST fetch supplies the orderbook levels (`prices`); the stream
+/// only updates `last_price`, `index`, and funding.
+async fn watch_ticker(ticker: &mut Ticker, format: OutputFormat) -> Result<()> {
+    use crossterm::{cursor, execute, terminal};
+    use std::io::stdout;
+
+    use crate::api::stream::{self, RawStreamMsg};
+
+    let mut rx = stream::start_raw(
+        vec!["futures/inverse/btc_usd/ticker".to_string()],
+        None,
+    );
+
+    let _ = execute!(stdout(), cursor::Hide);
+
+    let render = |t: &Ticker| -> Result<()> {
+        let _ = execute!(
+            stdout(),
+            cursor::MoveTo(0, 0),
+            terminal::Clear(terminal::ClearType::All)
+        );
+        print_single(TickerRow::from(t.clone()), format)?;
+        println!("\n(Ctrl+C to exit)");
+        Ok(())
+    };
+
+    render(ticker)?;
+
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => break,
+            msg = rx.recv() => {
+                match msg {
+                    Some(RawStreamMsg::Data { data, .. }) => {
+                        if let Some(lp) = data.get("lastPrice").and_then(|v| v.as_f64()) {
+                            ticker.last_price = Some(lp);
+                        }
+                        if let Some(idx) = data.get("index").and_then(|v| v.as_f64()) {
+                            ticker.index = idx;
+                        }
+                        if let Some(fund) = data.get("funding") {
+                            if let Some(rate) = fund.get("rate").and_then(|v| v.as_f64()) {
+                                ticker.funding_rate = Some(rate);
+                            }
+                        }
+                        render(ticker)?;
+                    }
+                    Some(RawStreamMsg::Status(_)) => {}
+                    None => break,
+                }
+            }
+        }
+    }
+
+    let _ = execute!(stdout(), cursor::Show);
+    Ok(())
 }
