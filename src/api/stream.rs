@@ -452,3 +452,105 @@ fn emit_withdrawal(data: &Value, tx: &mpsc::UnboundedSender<StreamEvent>) {
     };
     let _ = tx.send(StreamEvent::Withdrawal(w));
 }
+
+// ---------------------------------------------------------------------------
+// Raw passthrough mode — used by the `lnmarkets stream watch` CLI subcommand
+// to emit one JSON line per subscription event without the TUI's typed-decode
+// path. Shares connection / auth logic with the typed flow above.
+// ---------------------------------------------------------------------------
+
+/// Raw subscription messages, one per WS push, plus connection status changes.
+pub enum RawStreamMsg {
+    Status(StreamStatus),
+    Data { topic: String, data: Value },
+}
+
+/// Subscribe to an explicit list of topics and emit every push as a
+/// `RawStreamMsg::Data { topic, data }`. Authenticates first if any of the
+/// requested topics is private and credentials are provided.
+pub fn start_raw(
+    topics: Vec<String>,
+    credentials: Option<StreamCredentials>,
+) -> mpsc::UnboundedReceiver<RawStreamMsg> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    tokio::spawn(run_raw_loop(tx, topics, credentials));
+    rx
+}
+
+fn topic_is_private(topic: &str) -> bool {
+    topic.starts_with("wallet/") || topic.contains("/isolated/") || topic.contains("/cross/")
+}
+
+async fn run_raw_loop(
+    tx: mpsc::UnboundedSender<RawStreamMsg>,
+    topics: Vec<String>,
+    creds: Option<StreamCredentials>,
+) {
+    let mut backoff_ms = BACKOFF_INITIAL_MS;
+    loop {
+        let _ = tx.send(RawStreamMsg::Status(StreamStatus::Connecting));
+        match connect_and_run_raw(&tx, &topics, creds.as_ref()).await {
+            Ok(()) => backoff_ms = BACKOFF_INITIAL_MS,
+            Err(_) => {}
+        }
+        let _ = tx.send(RawStreamMsg::Status(StreamStatus::Disconnected));
+        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+        backoff_ms = (backoff_ms.saturating_mul(2)).min(BACKOFF_MAX_MS);
+    }
+}
+
+async fn connect_and_run_raw(
+    tx: &mpsc::UnboundedSender<RawStreamMsg>,
+    topics: &[String],
+    creds: Option<&StreamCredentials>,
+) -> Result<()> {
+    let (mut ws, _) = connect_async(STREAM_URL).await?;
+    let _ = tx.send(RawStreamMsg::Status(StreamStatus::Connected));
+
+    let needs_auth = topics.iter().any(|t| topic_is_private(t));
+
+    if needs_auth {
+        let c = creds.ok_or_else(|| {
+            anyhow!("authentication required for private channels — configure your API key first")
+        })?;
+        authenticate(&mut ws, c).await?;
+        let _ = tx.send(RawStreamMsg::Status(StreamStatus::Authenticated));
+    } else if let Some(c) = creds {
+        // Public-only topic list but creds available — auth opportunistically
+        // (e.g. "all" mode). Degrade gracefully on failure.
+        if authenticate(&mut ws, c).await.is_ok() {
+            let _ = tx.send(RawStreamMsg::Status(StreamStatus::Authenticated));
+        }
+    }
+
+    let sub = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 100,
+        "method": "subscribe",
+        "params": { "topics": topics }
+    });
+    ws.send(Message::Text(sub.to_string())).await?;
+
+    while let Some(msg) = ws.next().await {
+        match msg? {
+            Message::Text(text) => {
+                let Ok(value) = serde_json::from_str::<Value>(&text) else { continue };
+                if value.get("method").and_then(|m| m.as_str()) != Some("subscription") {
+                    continue;
+                }
+                let Some(params) = value.get("params") else { continue };
+                let topic = params
+                    .get("topic")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let Some(data) = params.get("data") else { continue };
+                let _ = tx.send(RawStreamMsg::Data { topic, data: data.clone() });
+            }
+            Message::Ping(p) => ws.send(Message::Pong(p)).await?,
+            Message::Close(_) => return Err(anyhow!("server closed connection")),
+            _ => {}
+        }
+    }
+    Err(anyhow!("stream ended"))
+}

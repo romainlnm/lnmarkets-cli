@@ -296,6 +296,11 @@ async fn run() -> Result<()> {
         Commands::Recap(args) => {
             args.execute(format).await?;
         }
+
+        Commands::Stream(cmd) => {
+            let credentials = config.get_credentials();
+            cmd.execute(credentials).await?;
+        }
     }
 
     Ok(())
