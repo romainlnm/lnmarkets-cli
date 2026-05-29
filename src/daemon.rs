@@ -5,7 +5,6 @@
 use crate::agents::{pattern::PatternAgent, macro_cal::MacroAgent, news::NewsAgent, flow::FlowAgent, whale::WhaleAgent, Agent, AgentRegistry, Direction, Signal};
 use crate::api::LnmClient;
 use crate::stats::save_trade_id;
-use crate::treasury::{Treasury, TreasuryConfig, TreasuryAction};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
@@ -50,8 +49,6 @@ pub struct DaemonConfig {
     pub conflict_threshold: f64,
     /// Minimum ATR% to trade (volatility filter) - None = disabled
     pub min_atr_pct: Option<f64>,
-    /// Treasury configuration (claw-cash integration)
-    pub treasury: Option<TreasuryConfig>,
 }
 
 impl Default for DaemonConfig {
@@ -69,7 +66,6 @@ impl Default for DaemonConfig {
             reversal_cooldown_secs: 300, // 5 minutes default
             conflict_threshold: 0.3,     // Skip if agents disagree by >30%
             min_atr_pct: Some(0.1),      // 0.1% ATR minimum by default
-            treasury: None,              // Disabled by default
         }
     }
 }
@@ -118,7 +114,6 @@ pub struct Daemon {
     last_reversal_time: RwLock<Option<DateTime<Utc>>>,
     /// Peak ROE achieved in current position (for trailing stop)
     peak_roe: RwLock<Option<f64>>,
-    treasury: Option<Treasury>,
 }
 
 impl Daemon {
@@ -149,8 +144,6 @@ impl Daemon {
             }
         }
 
-        let treasury = config.treasury.clone().map(Treasury::new);
-
         Self {
             config,
             registry,
@@ -164,7 +157,6 @@ impl Daemon {
             }),
             last_reversal_time: RwLock::new(None),
             peak_roe: RwLock::new(None),
-            treasury,
         }
     }
 
@@ -422,16 +414,6 @@ impl Daemon {
             println!("  Min ATR: {:.2}% (volatility filter)", min_atr);
         }
         println!("  Agents: {:?}", self.config.agents);
-
-        // Treasury status
-        if let Some(ref treasury) = self.treasury {
-            let available = treasury.is_available().await;
-            if available {
-                println!("  Treasury: \x1b[35mclaw-cash connected\x1b[0m");
-            } else {
-                println!("  Treasury: \x1b[33mclaw-cash offline\x1b[0m");
-            }
-        }
         println!();
 
         // Set cross margin leverage at startup (Live mode only)
@@ -493,22 +475,6 @@ impl Daemon {
                 if self.check_tp_sl().await {
                     println!();
                     continue;
-                }
-
-                // Treasury management (auto-fund/withdraw)
-                if let Some(ref treasury) = self.treasury {
-                    if let Some(ref client) = self.client {
-                        treasury.print_status(Some(client)).await;
-                        match treasury.manage(client).await {
-                            Ok(Some(action)) => {
-                                println!("  \x1b[35m[TREASURY]\x1b[0m {}", action);
-                            }
-                            Ok(None) => {}
-                            Err(e) => {
-                                println!("  \x1b[31m[TREASURY]\x1b[0m Error: {}", e);
-                            }
-                        }
-                    }
                 }
             }
 
