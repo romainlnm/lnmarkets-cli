@@ -6,6 +6,7 @@ pub mod market;
 pub mod mcp;
 pub mod output;
 pub mod recap;
+pub mod stream;
 
 use clap::{Parser, Subcommand};
 use crate::config::{Network, OutputFormat};
@@ -78,6 +79,9 @@ pub enum Commands {
     Recap(recap::RecapArgs),
     /// Launch interactive TUI dashboard
     Tui(TuiArgs),
+    /// Subscribe to live WebSocket streams (scripting / tailing)
+    #[command(subcommand)]
+    Stream(stream::StreamCommands),
 }
 
 /// Arguments for the daemon command
