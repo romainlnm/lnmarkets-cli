@@ -1,4 +1,5 @@
 pub mod account;
+pub mod alert;
 pub mod auth;
 pub mod funding;
 pub mod futures;
@@ -82,6 +83,10 @@ pub enum Commands {
     /// Subscribe to live WebSocket streams (scripting / tailing)
     #[command(subcommand)]
     Stream(stream::StreamCommands),
+
+    /// Price / funding alerts with OS-native notifications
+    #[command(subcommand)]
+    Alert(alert::AlertCommands),
 }
 
 /// Arguments for the daemon command

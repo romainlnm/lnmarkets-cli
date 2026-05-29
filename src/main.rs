@@ -1,5 +1,6 @@
 mod tui;
 mod agents;
+mod alert;
 mod api;
 mod cli;
 mod config;
@@ -300,6 +301,10 @@ async fn run() -> Result<()> {
         Commands::Stream(cmd) => {
             let credentials = config.get_credentials();
             cmd.execute(credentials).await?;
+        }
+
+        Commands::Alert(cmd) => {
+            cmd.execute().await?;
         }
     }
 
