@@ -4,4 +4,3 @@ pub mod error;
 pub mod stream;
 
 pub use client::LnmClient;
-pub use error::{ApiError, ErrorCategory};

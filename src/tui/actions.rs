@@ -348,7 +348,6 @@ impl App {
                     .or(r.get("paymentRequest"))
                     .and_then(|v| v.as_str());
                 if let Some(inv) = inv {
-                    let mut lines: Vec<(String, String)> = vec![("Amount".into(), format!("{} sats", amount))];
                     // QR code
                     let mut qr_lines = Vec::new();
                     if let Ok(qr) = qrcode::QrCode::with_error_correction_level(inv.to_uppercase().as_bytes(), qrcode::EcLevel::L) {
@@ -373,7 +372,7 @@ impl App {
                         qr_lines.push(border);
                     }
                     if !qr_lines.is_empty() {
-                        self.popup = Some(Popup::QrCode { title: "⚡ Lightning Invoice".into(), invoice: inv.to_string(), amount, qr_lines });
+                        self.popup = Some(Popup::QrCode { title: "⚡ Lightning Invoice".into(), amount, qr_lines });
                     } else {
                         let mut lines: Vec<(String, String)> = vec![("Amount".into(), format!("{} sats", amount)), ("".into(), String::new())];
                         let chars: Vec<char> = inv.chars().collect();

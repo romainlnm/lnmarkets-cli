@@ -27,16 +27,6 @@ impl ServiceGroup {
     pub fn all() -> Vec<Self> {
         vec![Self::Market, Self::Account, Self::Trade, Self::Funding]
     }
-
-    /// Default services (read-only)
-    pub fn default_services() -> Vec<Self> {
-        vec![Self::Market, Self::Account]
-    }
-
-    /// Services that contain dangerous operations
-    pub fn is_dangerous(&self) -> bool {
-        matches!(self, Self::Trade | Self::Funding)
-    }
 }
 
 /// Parse service groups from comma-separated string

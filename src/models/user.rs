@@ -20,22 +20,6 @@ pub struct User {
     pub last_update: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct UpdateUserRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "showLeaderboard")]
-    pub show_leaderboard: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "showUsername")]
-    pub show_username: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Leaderboard {
-    #[serde(default)]
-    pub entries: Vec<LeaderboardEntry>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeaderboardEntry {
     pub rank: Option<i64>,
