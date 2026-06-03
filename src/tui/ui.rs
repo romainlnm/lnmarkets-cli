@@ -992,7 +992,7 @@ fn pdraw(f: &mut Frame, a: &App, p: &Popup, ar: Rect) {
                 }
             }
         }
-        Popup::QrCode { title, invoice: _, amount, qr_lines } => {
+        Popup::QrCode { title, amount, qr_lines } => {
             let h = (qr_lines.len() as u16 + 6).min(ar.height - 2);
             let w = qr_lines.first().map(|l| l.chars().count()).unwrap_or(40) as u16 + 6;
             let r = cr(w.min(ar.width - 2), h, ar); f.render_widget(Clear, r);

@@ -128,7 +128,7 @@ pub enum Popup {
         title: String,
         lines: Vec<(String, String)>,
     },
-    QrCode { title: String, invoice: String, amount: i64, qr_lines: Vec<String> },
+    QrCode { title: String, amount: i64, qr_lines: Vec<String> },
     Help,
 }
 #[derive(Clone, Debug)]

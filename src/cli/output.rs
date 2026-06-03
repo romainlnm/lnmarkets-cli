@@ -52,10 +52,6 @@ pub fn print_error(message: &str) {
     eprintln!("{} {}", "✗".red(), message);
 }
 
-pub fn print_warning(message: &str) {
-    println!("{} {}", "!".yellow(), message);
-}
-
 pub fn print_info(message: &str) {
     println!("{} {}", "i".blue(), message);
 }

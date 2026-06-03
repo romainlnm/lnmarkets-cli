@@ -49,13 +49,6 @@ impl Network {
             Network::Testnet => "https://api.testnet4.lnmarkets.com",
         }
     }
-
-    pub fn ws_url(&self) -> &'static str {
-        match self {
-            Network::Mainnet => "wss://api.lnmarkets.com",
-            Network::Testnet => "wss://api.testnet4.lnmarkets.com",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, clap::ValueEnum)]
