@@ -1,6 +1,6 @@
 [package]
 name = "lnm"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Command-line interface for LN Markets API v3"
 license = "MIT"
