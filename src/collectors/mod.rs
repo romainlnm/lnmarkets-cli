@@ -11,6 +11,17 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::Duration;
+
+/// Shared HTTP client constructor with a hard request timeout. Without one,
+/// a hung connection blocks the daemon loop until the OS abandons the TCP
+/// connection (~15 min observed) — during which TP/SL checks don't run.
+pub(crate) fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap_or_default()
+}
 
 pub mod flow;
 pub mod macro_cal;

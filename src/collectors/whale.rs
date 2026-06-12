@@ -7,7 +7,6 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::time::Duration;
 
 #[derive(Debug, Clone, Default)]
 pub struct WhaleConfig {}
@@ -32,10 +31,7 @@ pub struct WhaleAgent {
 impl WhaleAgent {
     pub fn new(_config: WhaleConfig) -> Self {
         Self {
-            http_client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap_or_default(),
+            http_client: super::http_client(),
         }
     }
 

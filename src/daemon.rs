@@ -193,7 +193,7 @@ impl Daemon {
             collectors,
             arbiter,
             client,
-            http: reqwest::Client::new(),
+            http: crate::collectors::http_client(),
             paper_state: RwLock::new(PaperState {
                 trades: Vec::new(),
                 next_id: 1,
