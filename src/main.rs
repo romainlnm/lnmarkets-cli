@@ -1,5 +1,6 @@
 mod tui;
-mod agents;
+mod collectors;
+mod llm;
 mod alert;
 mod api;
 mod cli;
@@ -103,15 +104,22 @@ async fn run() -> Result<()> {
                 take_profit_pct: Some(args.take_profit),
                 stop_loss_pct: Some(args.stop_loss),
                 trailing_stop_pct: Some(args.trailing_stop),
-                agents: args.agents.clone(),
+                max_daily_loss_sats: args.max_daily_loss,
+                collectors: args.collectors.clone(),
             };
 
-            // Only load client for live trading
-            let client = if mode == TradingMode::Live {
-                let credentials = config.get_credentials();
-                Some(LnmClient::new(network, Some(credentials))?)
-            } else {
-                None
+            // Live requires credentials. Paper uses them opportunistically so
+            // simulated fills mark against the real LN Markets bid/ask.
+            let client = match mode {
+                TradingMode::Live => {
+                    let credentials = config.get_credentials();
+                    Some(LnmClient::new(network, Some(credentials))?)
+                }
+                TradingMode::Paper => config
+                    .has_credentials()
+                    .then(|| config.get_credentials())
+                    .and_then(|c| LnmClient::new(network, Some(c)).ok()),
+                TradingMode::DryRun => None,
             };
 
             let daemon = Daemon::new(daemon_config, client)?;

@@ -163,11 +163,11 @@ LLM-driven trading on cross margin. Claude is the sole decider — every cycle, 
 
 ```bash
 export ANTHROPIC_API_KEY=...                       # required
-export ANTHROPIC_MODEL=claude-opus-4-7             # optional, defaults to this
+export ANTHROPIC_MODEL=claude-opus-4-8             # optional, defaults to this
 
-lnmarkets daemon --agents pattern,flow             # dry run
-lnmarkets daemon --paper --agents pattern,flow,news
-lnmarkets daemon --live --max-position 20 --leverage 10
+lnmarkets daemon --collectors pattern,flow         # dry run
+lnmarkets daemon --paper --collectors pattern,flow,whale,macro,news
+lnmarkets daemon --live --max-position 20 --leverage 10 --max-daily-loss 5000
 ```
 
 ### How it works
@@ -187,7 +187,7 @@ All use public APIs, no extra keys.
 
 | Collector | Source | Returns |
 |---|---|---|
-| `pattern` | Binance Spot | Price, RSI(14), MACD, EMA pair, Bollinger bands, ATR% |
+| `pattern` | Binance Spot | Multi-timeframe (1m/5m/1h): RSI(14), MACD, EMA pair, Bollinger bands, ATR%, 1h/24h change, 24h & 4-day high/low levels |
 | `flow` | Binance Futures | OB imbalance, funding rate, OI, L/S ratio, taker volume |
 | `macro` | TradingView | Recent releases (actual vs forecast) + upcoming events |
 | `news` | Multi-source RSS | Recent headlines verbatim — Claude reads them |
@@ -214,7 +214,9 @@ lnmarkets daemon [OPTIONS]
       --take-profit <PCT>         [default: 10]
       --stop-loss <PCT>           [default: 5]
       --trailing-stop <PCT>       [default: 3]
-  -a, --agents <LIST>             Collectors [default: pattern,flow]
+      --max-daily-loss <SATS>     Stop opening positions after this much net
+                                  realized loss in a UTC day (off by default)
+  -c, --collectors <LIST>         Data collectors [default: pattern,flow]
 ```
 
 Full reference: `lnmarkets daemon --help`.

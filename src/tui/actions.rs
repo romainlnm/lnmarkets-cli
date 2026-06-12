@@ -581,7 +581,8 @@ impl App {
             take_profit_pct: Some(5.0),
             stop_loss_pct: Some(3.0),
             trailing_stop_pct: Some(3.0),
-            agents: agents.clone(),
+            max_daily_loss_sats: None,
+            collectors: agents.clone(),
         };
         let client = if mode == crate::daemon::TradingMode::Live {
             let cfg = crate::config::Config::load().unwrap_or_default();

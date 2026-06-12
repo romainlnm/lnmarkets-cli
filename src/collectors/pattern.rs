@@ -5,7 +5,6 @@
 use super::DataCollector;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use serde::Deserialize;
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone)]
@@ -37,15 +36,6 @@ impl Default for PatternConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct BinanceKline {
-    #[serde(rename = "0")]
-    open_time: u64,
-    #[serde(rename = "4")]
-    close: String,
-}
-
 #[derive(Debug, Clone)]
 struct OhlcPoint {
     high: f64,
@@ -70,10 +60,10 @@ impl PatternAgent {
         Self::new(PatternConfig::default())
     }
 
-    async fn fetch_ohlc(&self) -> Result<Vec<OhlcPoint>> {
+    async fn fetch_ohlc(&self, interval: &str, limit: u32) -> Result<Vec<OhlcPoint>> {
         let url = format!(
-            "https://api.binance.com/api/v3/klines?symbol={}&interval=1m&limit=50",
-            self.config.symbol
+            "https://api.binance.com/api/v3/klines?symbol={}&interval={}&limit={}",
+            self.config.symbol, interval, limit
         );
         let response: Vec<Vec<serde_json::Value>> = self
             .http_client
@@ -219,32 +209,11 @@ impl PatternAgent {
     }
 }
 
-#[async_trait]
-impl DataCollector for PatternAgent {
-    fn name(&self) -> &str {
-        "pattern"
-    }
-
-    async fn collect(&self) -> Result<Value> {
-        let ohlc = self.fetch_ohlc().await?;
-        if ohlc.len() < self.config.ema_slow {
-            return Ok(json!({
-                "error": format!("insufficient candles: {} < {}", ohlc.len(), self.config.ema_slow),
-            }));
-        }
-        let prices = Self::closes(&ohlc);
+impl PatternAgent {
+    /// Indicator block for one timeframe's candles.
+    fn timeframe_report(&self, ohlc: &[OhlcPoint]) -> Value {
+        let prices = Self::closes(ohlc);
         let current_price = *prices.last().unwrap_or(&0.0);
-        let prev_price = if prices.len() >= 60 {
-            prices[prices.len() - 60]
-        } else {
-            current_price
-        };
-        let change_1h_pct = if prev_price > 0.0 {
-            (current_price - prev_price) / prev_price * 100.0
-        } else {
-            0.0
-        };
-        let atr_pct = Self::calculate_atr_pct(&ohlc, 14);
         let rsi = Self::calculate_rsi(&prices, self.config.rsi_period);
         let ema_fast = Self::calculate_ema(&prices, self.config.ema_fast);
         let ema_slow = Self::calculate_ema(&prices, self.config.ema_slow);
@@ -257,9 +226,7 @@ impl DataCollector for PatternAgent {
             self.config.macd_signal,
         );
 
-        Ok(json!({
-            "price": current_price,
-            "change_1h_pct": change_1h_pct,
+        json!({
             "rsi_14": rsi,
             "ema": ema_fast.zip(ema_slow).map(|(f, s)| json!({
                 format!("ema_{}", self.config.ema_fast): f,
@@ -279,7 +246,81 @@ impl DataCollector for PatternAgent {
                     else if current_price >= hi { "at_or_above_upper" }
                     else { "inside" },
             })),
-            "atr_pct": atr_pct,
+            "atr_pct": Self::calculate_atr_pct(ohlc, 14),
+        })
+    }
+}
+
+/// % change between the close `lookback` candles ago and the latest close.
+fn change_pct(prices: &[f64], lookback: usize) -> Option<f64> {
+    if prices.len() <= lookback {
+        return None;
+    }
+    let current = *prices.last()?;
+    let prev = prices[prices.len() - 1 - lookback];
+    if prev > 0.0 {
+        Some((current - prev) / prev * 100.0)
+    } else {
+        None
+    }
+}
+
+fn highest(ohlc: &[OhlcPoint]) -> Option<f64> {
+    ohlc.iter().map(|p| p.high).fold(None, |acc, h| {
+        Some(acc.map_or(h, |a: f64| a.max(h)))
+    })
+}
+
+fn lowest(ohlc: &[OhlcPoint]) -> Option<f64> {
+    ohlc.iter().map(|p| p.low).fold(None, |acc, l| {
+        Some(acc.map_or(l, |a: f64| a.min(l)))
+    })
+}
+
+#[async_trait]
+impl DataCollector for PatternAgent {
+    fn name(&self) -> &str {
+        "pattern"
+    }
+
+    async fn collect(&self) -> Result<Value> {
+        // Multi-timeframe view: 1m for entry timing, 5m for momentum, 1h for
+        // trend. Fetched concurrently.
+        let (m1, m5, h1) = tokio::try_join!(
+            self.fetch_ohlc("1m", 120),
+            self.fetch_ohlc("5m", 100),
+            self.fetch_ohlc("1h", 100),
+        )?;
+        if m1.len() < self.config.ema_slow {
+            return Ok(json!({
+                "error": format!("insufficient candles: {} < {}", m1.len(), self.config.ema_slow),
+            }));
+        }
+
+        let m1_closes = Self::closes(&m1);
+        let h1_closes = Self::closes(&h1);
+        let current_price = *m1_closes.last().unwrap_or(&0.0);
+
+        // Recent levels from 1h candles: last 24h and the full fetched window
+        // (~4 days) — support/resistance context for the arbiter.
+        let last_24h = if h1.len() > 24 { &h1[h1.len() - 24..] } else { &h1[..] };
+        let window_hours = h1.len();
+
+        Ok(json!({
+            "price": current_price,
+            "change_1h_pct": change_pct(&m1_closes, 60),
+            "change_24h_pct": change_pct(&h1_closes, 24),
+            "timeframes": {
+                "1m": self.timeframe_report(&m1),
+                "5m": self.timeframe_report(&m5),
+                "1h": self.timeframe_report(&h1),
+            },
+            "levels": {
+                "high_24h": highest(last_24h),
+                "low_24h": lowest(last_24h),
+                format!("high_{}h", window_hours): highest(&h1),
+                format!("low_{}h", window_hours): lowest(&h1),
+            },
         }))
     }
 }

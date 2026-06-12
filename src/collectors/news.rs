@@ -157,12 +157,21 @@ impl NewsAgent {
     }
 
     async fn fetch_all_news(&self) -> Vec<NewsItem> {
-        let mut all_items = Vec::new();
         let now = Utc::now();
         let max_age = chrono::Duration::hours(self.config.max_age_hours);
 
-        for source in &self.sources {
-            match self.fetch_feed(source).await {
+        // Fetch all feeds concurrently — serially, ten slow feeds at a 10s
+        // timeout each could eat a whole daemon cycle.
+        let results = futures_util::future::join_all(
+            self.sources
+                .iter()
+                .map(|source| async move { (source.name.clone(), self.fetch_feed(source).await) }),
+        )
+        .await;
+
+        let mut all_items = Vec::new();
+        for (name, result) in results {
+            match result {
                 Ok(items) => {
                     for item in items {
                         if let Some(pub_date) = item.published {
@@ -174,7 +183,7 @@ impl NewsAgent {
                     }
                 }
                 Err(e) => {
-                    eprintln!("[news] failed to fetch {}: {}", source.name, e);
+                    eprintln!("[news] failed to fetch {}: {}", name, e);
                 }
             }
         }
