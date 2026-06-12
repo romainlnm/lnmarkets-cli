@@ -175,9 +175,9 @@ lnmarkets daemon --live --max-position 20 --leverage 10 --max-daily-loss 5000
 Each cycle (`--interval` seconds, default 60):
 
 1. Every enabled collector fetches its raw observations and returns them as JSON.
-2. The daemon assembles a market snapshot — collector data, current price, open position, P&L, constraints.
-3. Claude receives the snapshot and returns `{ action, confidence, position_pct, reasoning }`.
-4. The daemon executes: `open_long` / `open_short` / `close` / `hold`. Reasoning logged on every cycle.
+2. The daemon assembles a market snapshot — collector data, current price, open position, P&L, constraints, plus its own recent decisions and trade outcomes.
+3. Claude receives the snapshot and returns `{ action, confidence, position_pct, reasoning }` (schema-enforced via structured outputs).
+4. The daemon executes: `open_long` / `open_short` / `close` / `hold`. Every decision and trade is also appended to `<config>/lnmarkets/daemon_journal.jsonl` for offline evaluation.
 
 There's no weighted voting, no anti-whipsaw threshold, no conflict detection in code — Claude reasons about all of that contextually. Mechanical exits (TP / SL / trailing) stay in Rust.
 
@@ -206,7 +206,8 @@ All use public APIs, no extra keys.
 ```bash
 lnmarkets daemon [OPTIONS]
 
-      --paper                     Simulated trades with real prices
+      --paper                     Simulated trades — same strategy, TP/SL and
+                                  fee model as live, real bid/ask fills
       --live                      Real trades — use carefully
   -i, --interval <SECS>           Analysis interval [default: 60]
       --max-position <USD>        Position size ceiling [default: 10]
