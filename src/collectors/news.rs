@@ -8,7 +8,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
@@ -88,10 +87,7 @@ impl NewsAgent {
         Self {
             config,
             sources: default_sources(),
-            http_client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap_or_default(),
+            http_client: super::http_client(),
             cache: Arc::new(RwLock::new(None)),
         }
     }

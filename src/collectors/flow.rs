@@ -31,7 +31,7 @@ impl FlowAgent {
     pub fn new(config: FlowConfig) -> Self {
         Self {
             config,
-            http_client: reqwest::Client::new(),
+            http_client: super::http_client(),
         }
     }
 

@@ -35,7 +35,7 @@ impl MacroAgent {
     pub fn new(config: MacroConfig) -> Self {
         Self {
             config,
-            http_client: reqwest::Client::new(),
+            http_client: super::http_client(),
         }
     }
 
