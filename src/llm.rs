@@ -14,40 +14,71 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use super::Direction;
+use crate::collectors::Direction;
 
 const ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
-const DEFAULT_MODEL: &str = "claude-opus-4-7";
-const TIMEOUT_SECS: u64 = 15;
+const DEFAULT_MODEL: &str = "claude-opus-4-8";
+const TIMEOUT_SECS: u64 = 30;
 const MAX_TOKENS: u32 = 768;
 
 const SYSTEM_PROMPT: &str = "You are a Bitcoin perpetual futures trader on LN Markets.
 You trade with strict risk discipline and operate on a fixed budget.
 
-You receive a structured snapshot of the market each cycle: price action with
-technical indicators, exchange order flow, the economic calendar, recent news
-headlines, and whale positions on Hyperliquid. The numbers are facts; your job
-is to interpret them in context.
+You receive a structured snapshot of the market each cycle: multi-timeframe
+price action with technical indicators, exchange order flow, the economic
+calendar, recent news headlines, and whale positions on Hyperliquid. You also
+receive your own recent decisions and trade outcomes. The numbers are facts;
+your job is to interpret them in context.
 
 Decision principles:
 - Form a trade thesis. Don't react to a single headline or a single indicator.
+- Weigh higher timeframes (1h) for trend direction; use 1m/5m for entry
+  timing only. Don't fight the higher-timeframe trend without strong evidence.
+- Review your recent decisions before acting. Don't flip-flop: reversing a
+  position you opened minutes ago pays the spread and fees twice — reverse
+  only when the thesis has genuinely broken, not on noise.
 - Skip ambiguous markets — return action=\"hold\" when conviction is low.
 - If you already hold a position aligned with the thesis, prefer hold over
   re-entering — don't churn through fees.
 - If you hold a position against the current thesis, return action=\"close\".
-- Aggressive reversals are allowed when the thesis genuinely shifts, but
-  expect to justify them.
+- The snapshot states the round-trip fee cost as % of margin. Only open when
+  your expected net-ROE move clearly exceeds that cost.
 - position_pct scales with conviction: 0.3 marginal, 0.6 strong, 1.0 only for
   high-conviction setups with multiple confirming inputs.
-- Trade fees and funding are real costs. Don't trade noise.
 
-Respond with valid JSON only — no markdown fence, no prose around it:
+Respond with the decision JSON only:
 {
   \"action\": \"open_long\" | \"open_short\" | \"close\" | \"hold\",
   \"confidence\": 0.0-1.0,
   \"position_pct\": 0.0-1.0,
   \"reasoning\": \"one to three sentences explaining the thesis\"
 }";
+
+/// JSON Schema enforced via structured outputs — the API guarantees the
+/// response text is valid JSON matching this shape. (Range clamps stay in
+/// code: structured outputs don't support numeric min/max constraints.)
+fn decision_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["open_long", "open_short", "close", "hold"]
+            },
+            "confidence": { "type": "number", "description": "0.0 to 1.0" },
+            "position_pct": {
+                "type": "number",
+                "description": "0.0 to 1.0, fraction of max position"
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "one to three sentences explaining the thesis"
+            }
+        },
+        "required": ["action", "confidence", "position_pct", "reasoning"],
+        "additionalProperties": false
+    })
+}
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -86,11 +117,15 @@ pub struct PositionBrief {
 
 pub struct MarketSnapshot<'a> {
     pub price: f64,
-    pub agent_data: &'a BTreeMap<String, Value>,
+    pub collector_data: &'a BTreeMap<String, Value>,
     pub current_position: Option<&'a PositionBrief>,
     pub max_position_usd: u64,
     pub leverage: u32,
     pub mode: &'a str,
+    /// Round-trip fees expressed as % of margin (net ROE) at this leverage.
+    pub round_trip_fee_pct_of_margin: f64,
+    /// Recent decisions and trade outcomes, oldest first (e.g. "12m ago: …").
+    pub recent_history: &'a [String],
 }
 
 pub struct LlmArbiter {
@@ -120,6 +155,10 @@ impl LlmArbiter {
             "model": self.model,
             "max_tokens": MAX_TOKENS,
             "system": SYSTEM_PROMPT,
+            "output_config": { "format": {
+                "type": "json_schema",
+                "schema": decision_schema(),
+            }},
             "messages": [{ "role": "user", "content": render_user_prompt(snapshot) }]
         });
 
@@ -146,9 +185,17 @@ impl LlmArbiter {
             .as_str()
             .ok_or_else(|| anyhow!("no content[0].text in response: {}", body_text))?;
 
-        let json_str = extract_json(text)?;
-        let mut decision: LlmDecision = serde_json::from_str(&json_str)
-            .with_context(|| format!("parse decision JSON: {}", json_str))?;
+        // Structured outputs guarantee the text is schema-valid JSON; the
+        // extract_json fallback covers models without that support (e.g. a
+        // custom ANTHROPIC_MODEL override).
+        let mut decision: LlmDecision = match serde_json::from_str(text) {
+            Ok(d) => d,
+            Err(_) => {
+                let json_str = extract_json(text)?;
+                serde_json::from_str(&json_str)
+                    .with_context(|| format!("parse decision JSON: {}", json_str))?
+            }
+        };
         decision.confidence = decision.confidence.clamp(0.0, 1.0);
         decision.position_pct = decision.position_pct.clamp(0.0, 1.0);
         Ok(decision)
@@ -162,8 +209,13 @@ fn render_user_prompt(s: &MarketSnapshot<'_>) -> String {
         Utc::now().to_rfc3339()
     ));
     out.push_str(&format!(
-        "Constraints: max position ${} USD, leverage {}x, mode={}\n\n",
+        "Constraints: max position ${} USD, leverage {}x, mode={}\n",
         s.max_position_usd, s.leverage, s.mode
+    ));
+    out.push_str(&format!(
+        "Round-trip fees ≈ {:.1}% of margin (net ROE) at this leverage — an \
+         expected move must clearly exceed this to be worth taking.\n\n",
+        s.round_trip_fee_pct_of_margin
     ));
     out.push_str(&format!("Current BTC price: ${:.0}\n\n", s.price));
 
@@ -176,11 +228,19 @@ fn render_user_prompt(s: &MarketSnapshot<'_>) -> String {
         out.push_str("Current position: none\n\n");
     }
 
-    if s.agent_data.is_empty() {
+    if !s.recent_history.is_empty() {
+        out.push_str("YOUR RECENT DECISIONS AND TRADES (oldest first):\n");
+        for line in s.recent_history {
+            out.push_str(&format!("- {}\n", line));
+        }
+        out.push('\n');
+    }
+
+    if s.collector_data.is_empty() {
         out.push_str("No collector data available.\n");
     } else {
         out.push_str("DATA FROM COLLECTORS (raw observations — interpret in context):\n\n");
-        for (name, data) in s.agent_data {
+        for (name, data) in s.collector_data {
             out.push_str(&format!(
                 "--- {} ---\n{}\n\n",
                 name.to_uppercase(),

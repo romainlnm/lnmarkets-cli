@@ -1,9 +1,10 @@
-//! Data-collecting agents.
+//! Data collectors.
 //!
-//! Each agent gathers structured observations from one data source (price
-//! action, order flow, calendar, news, whale positions). The LLM arbiter
-//! (`llm::LlmArbiter`) interprets all of them together and makes the trade
-//! decision. The agents themselves no longer score Long/Short.
+//! Each collector gathers structured observations from one data source
+//! (price action, order flow, calendar, news, whale positions). The LLM
+//! arbiter (`crate::llm::LlmArbiter`) — the single decision maker — reads
+//! all of them together and makes the trade decision. Collectors don't
+//! score Long/Short.
 //!
 //! See issue #16.
 
@@ -12,7 +13,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub mod flow;
-pub mod llm;
 pub mod macro_cal;
 pub mod news;
 pub mod pattern;

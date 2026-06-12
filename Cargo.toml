@@ -21,7 +21,7 @@ reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-feature
 
 # WebSocket client for stream API
 tokio-tungstenite = { version = "0.21", features = ["connect", "rustls-tls-webpki-roots"] }
-futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 # Cross-platform OS notifications (macOS / Linux / Windows)
 notify-rust = "4"

@@ -124,9 +124,21 @@ pub struct DaemonArgs {
     #[arg(long, default_value = "3")]
     pub trailing_stop: f64,
 
-    /// Collectors to enable (comma-separated: pattern,flow,macro,news,whale)
-    #[arg(short, long, value_delimiter = ',', default_value = "pattern,flow")]
-    pub agents: Vec<String>,
+    /// Daily loss circuit breaker in sats - stop opening new positions once
+    /// net realized losses reach this amount in a UTC day (closes still run)
+    #[arg(long)]
+    pub max_daily_loss: Option<u64>,
+
+    /// Data collectors to enable (comma-separated: pattern,flow,macro,news,whale)
+    #[arg(
+        short = 'c',
+        long,
+        alias = "agents",
+        short_alias = 'a',
+        value_delimiter = ',',
+        default_value = "pattern,flow"
+    )]
+    pub collectors: Vec<String>,
 }
 
 /// Arguments for the stats command

@@ -85,9 +85,15 @@ impl DataCollector for WhaleAgent {
         let mut long_count = 0u32;
         let mut short_count = 0u32;
         let mut total_pnl = 0.0;
+        let mut failed = 0u32;
 
-        for address in WHALE_ADDRESSES {
-            match self.fetch_btc_position(address).await {
+        let results = futures_util::future::join_all(
+            WHALE_ADDRESSES.iter().map(|a| self.fetch_btc_position(a)),
+        )
+        .await;
+
+        for result in results {
+            match result {
                 Ok(Some(pos)) => {
                     total_pnl += pos.unrealized_pnl;
                     if pos.side_is_long {
@@ -98,7 +104,8 @@ impl DataCollector for WhaleAgent {
                         short_size += pos.size_btc;
                     }
                 }
-                _ => {}
+                Ok(None) => {}
+                Err(_) => failed += 1,
             }
         }
 
@@ -116,6 +123,7 @@ impl DataCollector for WhaleAgent {
 
         Ok(json!({
             "addresses_total": WHALE_ADDRESSES.len(),
+            "addresses_failed": failed,
             "addresses_with_btc_position": long_count + short_count,
             "long_count": long_count,
             "long_size_btc": long_size,
