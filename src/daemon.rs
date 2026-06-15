@@ -19,7 +19,6 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tokio::time::interval;
 
 /// Trading mode
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -89,6 +88,18 @@ fn inverse_pl_sats(side: Direction, quantity: f64, entry_price: f64, exit_price:
 /// fill price — sizing them off margin would understate them by ~leverage×.
 fn estimated_fees_sats(quantity: f64, entry_price: f64, exit_price: f64) -> f64 {
     (quantity / entry_price + quantity / exit_price) * SATS_PER_BTC * FEE_RATE
+}
+
+/// Idle backoff cap: when flat and doing nothing, polling slows to at most
+/// this many times the base interval.
+const MAX_IDLE_MULT: u64 = 5;
+
+/// Sleep before the next cycle given the base interval and how many
+/// consecutive flat+idle cycles have elapsed. Streak 0 → base; each idle cycle
+/// adds one base interval, capped at MAX_IDLE_MULT× base.
+fn idle_interval_secs(base: u64, idle_streak: u64) -> u64 {
+    let mult = (idle_streak + 1).min(MAX_IDLE_MULT);
+    base.saturating_mul(mult)
 }
 
 /// Append one JSONL line to the daemon journal next to the trade-ID store
@@ -614,7 +625,11 @@ impl Daemon {
 
         println!("Starting LN Markets trading daemon...");
         println!("  Mode: {}", mode_str);
-        println!("  Interval: {}s", self.config.interval_secs);
+        println!(
+            "  Interval: {}s (idle backoff up to {}s while flat)",
+            self.config.interval_secs,
+            self.config.interval_secs.saturating_mul(MAX_IDLE_MULT)
+        );
         println!("  Arbiter: {} (Claude)", self.arbiter.model_name());
         println!("  Max position: ${} USD", self.config.max_position_usd);
         println!("  Leverage: {}x", self.config.leverage);
@@ -655,10 +670,24 @@ impl Daemon {
             println!();
         }
 
-        let mut ticker = interval(Duration::from_secs(self.config.interval_secs));
+        let base = self.config.interval_secs;
+        // Consecutive flat+HOLD cycles. Drives the idle backoff: while flat and
+        // doing nothing, polling slows to up to MAX_IDLE_MULT× the base interval
+        // (cutting API cost in dead chop). Resets to base the moment a position
+        // is open, an action fires, or a fetch errors — so TP/SL stays responsive
+        // and error recovery stays fast.
+        let mut idle_streak: u64 = 0;
+        let mut first = true;
 
         loop {
-            ticker.tick().await;
+            if !first {
+                let secs = idle_interval_secs(base, idle_streak);
+                if secs > base {
+                    println!("  \x1b[2m(idle — next check in {}s)\x1b[0m", secs);
+                }
+                tokio::time::sleep(Duration::from_secs(secs)).await;
+            }
+            first = false;
 
             println!("[{}] Analyzing...", chrono::Utc::now().format("%H:%M:%S"));
 
@@ -673,6 +702,7 @@ impl Daemon {
                         e
                     );
                     println!();
+                    idle_streak = 0; // recover fast, don't back off on errors
                     continue;
                 }
             };
@@ -684,6 +714,7 @@ impl Daemon {
             // TP/SL/trailing applies to live and paper alike
             if self.check_tp_sl(current_position.as_ref()).await {
                 println!();
+                idle_streak = 0; // just closed a position — stay responsive
                 continue;
             }
 
@@ -708,14 +739,25 @@ impl Daemon {
                 }
             }
 
-            if let Some(action) = self.decide_via_llm(&collector_data, current_position.as_ref()).await
-            {
+            let action = self
+                .decide_via_llm(&collector_data, current_position.as_ref())
+                .await;
+            let opened = action.is_some();
+            if let Some(action) = action {
                 self.execute_action(action, current_position.as_ref()).await;
             }
 
             // Show paper trading stats
             if self.config.mode == TradingMode::Paper {
                 self.print_paper_stats().await;
+            }
+
+            // Poll fast whenever there's something to manage (an open position
+            // or a fresh entry); otherwise ramp the idle backoff.
+            if current_position.is_some() || opened {
+                idle_streak = 0;
+            } else {
+                idle_streak = idle_streak.saturating_add(1);
             }
 
             println!();
@@ -1135,6 +1177,17 @@ mod tests {
         let pl = inverse_pl_sats(Direction::Short, 100.0, 50_000.0, 45_000.0);
         assert!(pl > 0.0);
         assert_eq!(inverse_pl_sats(Direction::Neutral, 100.0, 50_000.0, 45_000.0), 0.0);
+    }
+
+    #[test]
+    fn idle_backoff_ramps_then_caps() {
+        // streak 0 = base, then +1 base per idle cycle, capped at 5x.
+        assert_eq!(idle_interval_secs(60, 0), 60);
+        assert_eq!(idle_interval_secs(60, 1), 120);
+        assert_eq!(idle_interval_secs(60, 4), 300);
+        assert_eq!(idle_interval_secs(60, 50), 300); // capped
+        // Cap is relative to the user's base interval.
+        assert_eq!(idle_interval_secs(120, 99), 600);
     }
 
     #[test]
