@@ -181,6 +181,8 @@ Each cycle (`--interval` seconds, default 60):
 
 There's no weighted voting, no anti-whipsaw threshold, no conflict detection in code — Claude reasons about all of that contextually. Mechanical exits (TP / SL / trailing) stay in Rust.
 
+While flat and idle (a run of `hold`s with no position), the cycle interval backs off up to 5× to save API cost in dead markets; it snaps back to the base `--interval` the moment a position is open, an action fires, or a fetch errors — so TP/SL stays responsive.
+
 ### Collectors
 
 All use public APIs, no extra keys.
