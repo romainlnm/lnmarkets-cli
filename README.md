@@ -233,6 +233,20 @@ lnmarkets stats                        # summary
 lnmarkets stats --trades -l 20         # last 20 orders
 ```
 
+### Journal evaluation
+
+Offline analysis of the daemon journal (`<config>/lnmarkets/daemon_journal.jsonl`) —
+works for paper and live, no credentials or API calls. Reports win rate, profit
+factor, avg win/loss, exit-reason breakdown, approximate peak-capture (how much of
+each trade's best move the exits kept), and a buy-and-hold benchmark over the same
+window.
+
+```bash
+lnmarkets journal-stats                 # full report
+lnmarkets journal-stats --mode paper    # filter to one mode
+lnmarkets journal-stats --file ./run.jsonl
+```
+
 ## Market Recap
 
 24-48h BTC derivatives overview — no credentials.
