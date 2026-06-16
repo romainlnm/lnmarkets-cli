@@ -76,6 +76,9 @@ pub enum Commands {
     /// Show trading statistics
     Stats(StatsArgs),
 
+    /// Evaluate the daemon journal (offline performance stats)
+    JournalStats(JournalStatsArgs),
+
     /// BTC market recap (24-48h overview)
     Recap(recap::RecapArgs),
     /// Launch interactive TUI dashboard
@@ -151,6 +154,18 @@ pub struct StatsArgs {
     /// Number of recent trades to show
     #[arg(short, long, default_value = "10")]
     pub limit: u32,
+}
+
+/// Arguments for the journal-stats command
+#[derive(clap::Args, Debug)]
+pub struct JournalStatsArgs {
+    /// Path to the journal file (defaults to <config>/lnmarkets/daemon_journal.jsonl)
+    #[arg(short, long)]
+    pub file: Option<String>,
+
+    /// Only include events from this mode (paper, live, dry_run)
+    #[arg(short, long)]
+    pub mode: Option<String>,
 }
 
 /// Arguments for the TUI command

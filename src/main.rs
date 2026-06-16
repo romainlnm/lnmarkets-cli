@@ -6,6 +6,7 @@ mod api;
 mod cli;
 mod config;
 mod daemon;
+mod journal;
 mod mcp;
 mod models;
 mod recap;
@@ -278,6 +279,10 @@ async fn run() -> Result<()> {
                 }
             }
             println!();
+        }
+
+        Commands::JournalStats(args) => {
+            journal::run(args.file.clone(), args.mode.clone())?;
         }
 
         Commands::Recap(args) => {
