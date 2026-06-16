@@ -199,9 +199,17 @@ All use public APIs, no extra keys.
 
 | Strategy | Trigger |
 |---|---|
-| Take profit | Net ROE ≥ `--take-profit` |
-| Stop loss | Net ROE ≤ `−-stop-loss` |
-| Trailing stop | Net ROE drops `--trailing-stop` from session peak |
+| Take profit | Net ROE ≥ effective TP |
+| Stop loss | Net ROE ≤ −effective SL |
+| Trailing stop | Net ROE drops the effective trail from session peak |
+
+Exit thresholds are **volatility-scaled**: each cycle they're sized to the
+recent 1h ATR (tighter in chop, wider in expansion) and clamped to sane floors
+and ceilings. The `--take-profit` / `--stop-loss` / `--trailing-stop` values act
+as the fixed fallback used on the first cycle before an ATR is available (and a
+value of 0 disables that exit). The position line tags which is in force,
+`[atr]` or `[fixed]`. Claude trades both directions symmetrically — a confirmed
+1h downtrend is a short setup the same way an uptrend is a long.
 
 ### Options
 

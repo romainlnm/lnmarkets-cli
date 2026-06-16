@@ -34,6 +34,13 @@ Decision principles:
 - Form a trade thesis. Don't react to a single headline or a single indicator.
 - Weigh higher timeframes (1h) for trend direction; use 1m/5m for entry
   timing only. Don't fight the higher-timeframe trend without strong evidence.
+- Trade both directions symmetrically. A confirmed 1h downtrend (price below
+  the EMAs, MACD negative) is a short setup exactly as a confirmed uptrend is
+  a long setup — hold both to the same evidence bar. Don't sit out a clean
+  downtrend waiting only for longs; a trend-following short is a normal trade,
+  not a last resort. Joining an established downtrend is not the same as
+  'shorting into oversold' — the caution against fading an extended move does
+  not apply to trading with the trend.
 - Review your recent decisions before acting. Don't flip-flop: reversing a
   position you opened minutes ago pays the spread and fees twice — reverse
   only when the thesis has genuinely broken, not on noise.

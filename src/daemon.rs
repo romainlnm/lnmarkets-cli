@@ -94,6 +94,36 @@ fn estimated_fees_sats(quantity: f64, entry_price: f64, exit_price: f64) -> f64 
 /// this many times the base interval.
 const MAX_IDLE_MULT: u64 = 5;
 
+// ── ATR-scaled exits ───────────────────────────────────────────────────────
+// Exits are sized to recent volatility (1h ATR) instead of fixed percentages,
+// so stops tighten in chop and widen in expansion. Thresholds are in net-ROE
+// %. One ATR of price move equals `atr_pct × leverage` in ROE terms; these
+// multipliers are applied to that. Defaults recover the old fixed 10/5/3 at a
+// "typical" ~0.5% 1h ATR on 10× leverage, then adapt as vol changes. Clamps
+// keep things sane when ATR is unusually small or large.
+const TP_ATR_MULT: f64 = 2.0;
+const SL_ATR_MULT: f64 = 1.0;
+const TRAIL_ATR_MULT: f64 = 0.6;
+const TP_ROE_RANGE: (f64, f64) = (4.0, 40.0);
+const SL_ROE_RANGE: (f64, f64) = (2.0, 20.0);
+const TRAIL_ROE_RANGE: (f64, f64) = (1.5, 12.0);
+
+/// Effective exit thresholds for the current cycle, in net-ROE %.
+/// `None` means that exit is disabled. `from_atr` records whether the values
+/// were volatility-scaled (true) or fell back to the fixed config (false).
+#[derive(Debug, Clone, Copy)]
+struct Exits {
+    tp: Option<f64>,
+    sl: Option<f64>,
+    trail: Option<f64>,
+    from_atr: bool,
+}
+
+/// Volatility-scale a base ROE threshold from a 1-ATR ROE move, clamped.
+fn atr_exit(atr_roe: f64, mult: f64, range: (f64, f64)) -> f64 {
+    (atr_roe * mult).clamp(range.0, range.1)
+}
+
 /// Sleep before the next cycle given the base interval and how many
 /// consecutive flat+idle cycles have elapsed. Streak 0 → base; each idle cycle
 /// adds one base interval, capped at MAX_IDLE_MULT× base.
@@ -177,6 +207,9 @@ pub struct Daemon {
     history: RwLock<VecDeque<(DateTime<Utc>, String)>>,
     /// (UTC day, net realized P&L in sats) for the daily-loss circuit breaker.
     daily_pnl: RwLock<(chrono::NaiveDate, i64)>,
+    /// Latest 1h ATR as % of price, cached from the pattern collector to size
+    /// volatility-scaled exits. `None` until the first successful collection.
+    recent_atr_pct: RwLock<Option<f64>>,
 }
 
 /// How many history entries the LLM sees.
@@ -215,7 +248,38 @@ impl Daemon {
             peak_roe: RwLock::new(None),
             history: RwLock::new(VecDeque::new()),
             daily_pnl: RwLock::new((Utc::now().date_naive(), 0)),
+            recent_atr_pct: RwLock::new(None),
         })
+    }
+
+    /// Effective exit thresholds for this cycle. When a recent 1h ATR is
+    /// available, TP/SL/trail are sized to it; otherwise they fall back to the
+    /// fixed config percentages. A config value of `None` disables that exit
+    /// regardless.
+    async fn effective_exits(&self) -> Exits {
+        let atr_roe = self
+            .recent_atr_pct
+            .read()
+            .await
+            .map(|a| a * self.config.leverage as f64)
+            .filter(|r| *r > 0.0);
+        match atr_roe {
+            Some(r) => Exits {
+                tp: self.config.take_profit_pct.map(|_| atr_exit(r, TP_ATR_MULT, TP_ROE_RANGE)),
+                sl: self.config.stop_loss_pct.map(|_| atr_exit(r, SL_ATR_MULT, SL_ROE_RANGE)),
+                trail: self
+                    .config
+                    .trailing_stop_pct
+                    .map(|_| atr_exit(r, TRAIL_ATR_MULT, TRAIL_ROE_RANGE)),
+                from_atr: true,
+            },
+            None => Exits {
+                tp: self.config.take_profit_pct,
+                sl: self.config.stop_loss_pct,
+                trail: self.config.trailing_stop_pct,
+                from_atr: false,
+            },
+        }
     }
 
     /// Append an entry to the decision/trade history shown to the LLM.
@@ -529,7 +593,8 @@ impl Daemon {
 
     /// Check TP/SL/trailing on the cycle's position snapshot and close if
     /// triggered (based on Net ROE after estimated fees). Live and paper.
-    async fn check_tp_sl(&self, position: Option<&CrossPosition>) -> bool {
+    /// Thresholds come from `exits` (volatility-scaled or fixed fallback).
+    async fn check_tp_sl(&self, position: Option<&CrossPosition>, exits: &Exits) -> bool {
         let position = match position {
             Some(p) => p,
             None => {
@@ -543,7 +608,7 @@ impl Daemon {
         let net_roe = if position.margin > 0.0 { (net_pl / position.margin) * 100.0 } else { 0.0 };
 
         // Check take profit (based on net ROE)
-        if let Some(tp_pct) = self.config.take_profit_pct {
+        if let Some(tp_pct) = exits.tp {
             if net_roe >= tp_pct {
                 let reason = format!(
                     "Take profit triggered (Net ROE {:+.2}% >= +{:.1}%)",
@@ -561,7 +626,7 @@ impl Daemon {
         }
 
         // Check stop loss (based on net ROE)
-        if let Some(sl_pct) = self.config.stop_loss_pct {
+        if let Some(sl_pct) = exits.sl {
             if net_roe <= -sl_pct {
                 let reason = format!(
                     "Stop loss triggered (Net ROE {:+.2}% <= -{:.1}%)",
@@ -579,7 +644,7 @@ impl Daemon {
         }
 
         // Trailing stop logic - only activates when in profit
-        if let Some(trail_pct) = self.config.trailing_stop_pct {
+        if let Some(trail_pct) = exits.trail {
             let mut peak = self.peak_roe.write().await;
 
             // Update peak ROE if we're in profit and current ROE is higher
@@ -634,13 +699,13 @@ impl Daemon {
         println!("  Max position: ${} USD", self.config.max_position_usd);
         println!("  Leverage: {}x", self.config.leverage);
         if let Some(tp) = self.config.take_profit_pct {
-            println!("  Take profit: +{:.1}%", tp);
+            println!("  Take profit: +{:.1}% (ATR-scaled, fixed fallback)", tp);
         }
         if let Some(sl) = self.config.stop_loss_pct {
-            println!("  Stop loss: -{:.1}%", sl);
+            println!("  Stop loss: -{:.1}% (ATR-scaled, fixed fallback)", sl);
         }
         if let Some(trail) = self.config.trailing_stop_pct {
-            println!("  Trailing stop: {:.1}% from peak", trail);
+            println!("  Trailing stop: {:.1}% from peak (ATR-scaled, fixed fallback)", trail);
         }
         if let Some(limit) = self.config.max_daily_loss_sats {
             println!("  Daily loss breaker: {} sats", limit);
@@ -707,12 +772,16 @@ impl Daemon {
                 }
             };
 
+            // Exit thresholds for this cycle — volatility-scaled from the ATR
+            // cached last cycle, or fixed config on the first cycle.
+            let exits = self.effective_exits().await;
+
             if let Some(ref pos) = current_position {
-                self.print_position(pos).await;
+                self.print_position(pos, &exits).await;
             }
 
             // TP/SL/trailing applies to live and paper alike
-            if self.check_tp_sl(current_position.as_ref()).await {
+            if self.check_tp_sl(current_position.as_ref(), &exits).await {
                 println!();
                 idle_streak = 0; // just closed a position — stay responsive
                 continue;
@@ -737,6 +806,17 @@ impl Daemon {
                         eprintln!("  [{}] collector failed: {}", name, e);
                     }
                 }
+            }
+
+            // Cache 1h ATR for next cycle's volatility-scaled exits.
+            if let Some(atr) = collector_data
+                .get("pattern")
+                .and_then(|p| p.get("timeframes"))
+                .and_then(|t| t.get("1h"))
+                .and_then(|h| h.get("atr_pct"))
+                .and_then(|a| a.as_f64())
+            {
+                *self.recent_atr_pct.write().await = Some(atr);
             }
 
             let action = self
@@ -765,8 +845,9 @@ impl Daemon {
     }
 
     /// Print the position line with net ROE after estimated fees.
-    /// Works on live and paper snapshots alike.
-    async fn print_position(&self, pos: &CrossPosition) {
+    /// Works on live and paper snapshots alike. Shows the effective (possibly
+    /// volatility-scaled) exit thresholds actually in force this cycle.
+    async fn print_position(&self, pos: &CrossPosition, exits: &Exits) {
         let side_icon = if pos.side == Direction::Long { "▲" } else { "▼" };
         let net_pl = (pos.pl - pos.est_fees) as i64;
         let net_roe = if pos.margin > 0.0 {
@@ -775,11 +856,12 @@ impl Daemon {
             0.0
         };
         let roe_color = if net_roe >= 0.0 { "\x1b[32m" } else { "\x1b[31m" };
-        let tp = self.config.take_profit_pct.unwrap_or(5.0);
-        let sl = self.config.stop_loss_pct.unwrap_or(3.0);
+        let tp = exits.tp.unwrap_or(5.0);
+        let sl = exits.sl.unwrap_or(3.0);
+        let tag = if exits.from_atr { "atr" } else { "fixed" };
 
         // Build trailing stop info if enabled
-        let trail_info = if let Some(trail_pct) = self.config.trailing_stop_pct {
+        let trail_info = if let Some(trail_pct) = exits.trail {
             let peak = self.peak_roe.read().await;
             match *peak {
                 Some(p) => format!(" | Trail: {:.1}% from peak {:.1}%", trail_pct, p),
@@ -795,8 +877,8 @@ impl Daemon {
             "POSITION"
         };
         println!(
-            "  \x1b[36m[{}]\x1b[0m {} ${:.0} @ ${:.0} | Net ROE: {}{:+.2}%\x1b[0m (TP: +{:.0}% / SL: -{:.0}%){} | Net P&L: {:+} sats (fees: ~{:.0} sats)",
-            label, side_icon, pos.quantity, pos.entry_price, roe_color, net_roe, tp, sl, trail_info, net_pl, pos.est_fees
+            "  \x1b[36m[{}]\x1b[0m {} ${:.0} @ ${:.0} | Net ROE: {}{:+.2}%\x1b[0m (TP: +{:.1}% / SL: -{:.1}% [{}]){} | Net P&L: {:+} sats (fees: ~{:.0} sats)",
+            label, side_icon, pos.quantity, pos.entry_price, roe_color, net_roe, tp, sl, tag, trail_info, net_pl, pos.est_fees
         );
     }
 
@@ -1177,6 +1259,19 @@ mod tests {
         let pl = inverse_pl_sats(Direction::Short, 100.0, 50_000.0, 45_000.0);
         assert!(pl > 0.0);
         assert_eq!(inverse_pl_sats(Direction::Neutral, 100.0, 50_000.0, 45_000.0), 0.0);
+    }
+
+    #[test]
+    fn atr_exits_scale_and_clamp() {
+        // Typical 1h ATR ~0.5% price × 10x leverage = 5% ROE-per-ATR.
+        let atr_roe = 0.5 * 10.0;
+        assert_eq!(atr_exit(atr_roe, TP_ATR_MULT, TP_ROE_RANGE), 10.0); // recovers old TP
+        assert_eq!(atr_exit(atr_roe, SL_ATR_MULT, SL_ROE_RANGE), 5.0); // recovers old SL
+        assert_eq!(atr_exit(atr_roe, TRAIL_ATR_MULT, TRAIL_ROE_RANGE), 3.0); // recovers old trail
+        // Dead-calm vol clamps up to the floor, not absurdly tight.
+        assert_eq!(atr_exit(0.1, SL_ATR_MULT, SL_ROE_RANGE), SL_ROE_RANGE.0);
+        // Vol spike clamps down to the ceiling, not absurdly wide.
+        assert_eq!(atr_exit(100.0, TP_ATR_MULT, TP_ROE_RANGE), TP_ROE_RANGE.1);
     }
 
     #[test]
