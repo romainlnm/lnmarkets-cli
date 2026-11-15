@@ -56,6 +56,9 @@ urlencoding = "2"
 # Agents
 async-trait = "0.1"
 
+# Technical indicators (Wilder RSI, EMA, MACD)
+fin-primitives = { version = "3.1", default-features = false, features = ["indicators"] }
+
 # TUI
 ratatui = "0.29"
 crossterm = "0.28"

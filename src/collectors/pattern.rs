@@ -5,6 +5,7 @@
 use super::DataCollector;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use fin_primitives::technical;
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone)]
@@ -123,35 +124,15 @@ impl PatternAgent {
         if prices.len() < period + 1 {
             return None;
         }
-        let mut gains = 0.0;
-        let mut losses = 0.0;
-        for i in 1..=period {
-            let change = prices[prices.len() - i] - prices[prices.len() - i - 1];
-            if change > 0.0 {
-                gains += change;
-            } else {
-                losses -= change;
-            }
-        }
-        let avg_gain = gains / period as f64;
-        let avg_loss = losses / period as f64;
-        if avg_loss == 0.0 {
-            return Some(100.0);
-        }
-        let rs = avg_gain / avg_loss;
-        Some(100.0 - (100.0 / (1.0 + rs)))
+        // Wilder-smoothed over the whole history, as exchange charts compute it.
+        technical::rsi(prices, period).last().copied()
     }
 
     fn calculate_ema(prices: &[f64], period: usize) -> Option<f64> {
         if prices.len() < period {
             return None;
         }
-        let multiplier = 2.0 / (period as f64 + 1.0);
-        let mut ema = prices[0..period].iter().sum::<f64>() / period as f64;
-        for price in prices.iter().skip(period) {
-            ema = (price - ema) * multiplier + ema;
-        }
-        Some(ema)
+        technical::ema(prices, period).last().copied()
     }
 
     fn calculate_bollinger(
@@ -178,32 +159,24 @@ impl PatternAgent {
         slow: usize,
         signal: usize,
     ) -> Option<(f64, f64, f64)> {
-        if prices.len() < slow + signal {
+        if prices.len() < slow + signal || prices.len() < fast {
             return None;
         }
-        let ema_fast = Self::calculate_ema(prices, fast)?;
-        let ema_slow = Self::calculate_ema(prices, slow)?;
-        let macd_line = ema_fast - ema_slow;
-        let mut macd_values = Vec::with_capacity(signal + 5);
-        for i in (0..signal + 5).rev() {
-            if prices.len() > slow + i {
-                let slice = &prices[..prices.len() - i];
-                if let (Some(f), Some(s)) = (
-                    Self::calculate_ema(slice, fast),
-                    Self::calculate_ema(slice, slow),
-                ) {
-                    macd_values.push(f - s);
-                }
-            }
-        }
+        // MACD line for every bar where both EMAs are seeded, built in one pass;
+        // the signal is the EMA of that whole line.
+        let start = fast.max(slow).saturating_sub(1);
+        let ema_fast = technical::ema(prices, fast);
+        let ema_slow = technical::ema(prices, slow);
+        let macd_values: Vec<f64> = ema_fast[start..]
+            .iter()
+            .zip(&ema_slow[start..])
+            .map(|(f, s)| f - s)
+            .collect();
+        let macd_line = *macd_values.last()?;
         if macd_values.len() < signal {
             return Some((macd_line, macd_line, 0.0));
         }
-        let multiplier = 2.0 / (signal as f64 + 1.0);
-        let mut signal_line = macd_values[0..signal].iter().sum::<f64>() / signal as f64;
-        for val in macd_values.iter().skip(signal) {
-            signal_line = (val - signal_line) * multiplier + signal_line;
-        }
+        let signal_line = *technical::ema(&macd_values, signal).last()?;
         let histogram = macd_line - signal_line;
         Some((macd_line, signal_line, histogram))
     }
@@ -343,6 +316,37 @@ mod tests {
         let ema = PatternAgent::calculate_ema(&prices, 5);
         assert!(ema.is_some());
         assert!(ema.unwrap() > 15.0);
+    }
+
+    #[test]
+    fn test_rsi_is_wilder_smoothed() {
+        // 20 up-moves then 14 down-moves: a plain average of the last 14
+        // changes reads 0, Wilder smoothing still carries the earlier gains.
+        let mut prices: Vec<f64> = (0..=20).map(|i| 100.0 + i as f64).collect();
+        prices.extend((1..=14).map(|i| 120.0 - i as f64 * 0.5));
+        let rsi = PatternAgent::calculate_rsi(&prices, 14).unwrap();
+        assert!(rsi > 0.0 && rsi < 100.0);
+    }
+
+    #[test]
+    fn test_macd_signal_over_full_history() {
+        let prices: Vec<f64> =
+            (0..100).map(|i| 100.0 + (i as f64 * 0.2).sin() * 5.0 + i as f64 * 0.1).collect();
+        let (line, signal, hist) = PatternAgent::calculate_macd(&prices, 12, 26, 9).unwrap();
+
+        // Reference: MACD at every bar from 26 on, signal = EMA(9) of all of them.
+        let macd_values: Vec<f64> = (26..=prices.len())
+            .map(|n| {
+                PatternAgent::calculate_ema(&prices[..n], 12).unwrap()
+                    - PatternAgent::calculate_ema(&prices[..n], 26).unwrap()
+            })
+            .collect();
+        let expected_signal = PatternAgent::calculate_ema(&macd_values, 9).unwrap();
+
+        assert!((line - macd_values[macd_values.len() - 1]).abs() < 1e-9);
+        assert!((signal - expected_signal).abs() < 1e-9);
+        assert!((hist - (line - signal)).abs() < 1e-12);
+        assert!(PatternAgent::calculate_macd(&prices[..34], 12, 26, 9).is_none());
     }
 
     #[test]
